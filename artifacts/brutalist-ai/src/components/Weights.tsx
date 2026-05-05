@@ -37,8 +37,7 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
     return next;
   };
 
-  // Live mode: timer-driven flicker (no history). Seeded per-instance phase
-  // offset so this panel doesn't tick in unison with other animated panels.
+  // Live: timer-driven flicker, seeded phase offset to break sync.
   useEffect(() => {
     if (paused || weights.length === 0) return;
     const prng = flickerPrngRef.current!;
@@ -57,7 +56,7 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
     };
   }, [seedData, paused, weights.length]);
 
-  // Paused mode: arrow-key driven step with full bidirectional history.
+  // Paused: bidirectional frame stepping via snapshot history.
   useEffect(() => {
     if (!paused || weights.length === 0 || !flickerPrngRef.current) return;
     const prng = flickerPrngRef.current;
