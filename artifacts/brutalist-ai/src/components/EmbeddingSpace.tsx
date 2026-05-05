@@ -40,9 +40,11 @@ const HOME_SIGMA = 0.11;
 // sharpness without breaking the cluster shape.
 const JITTER_AMP = 0.006;
 // Snap-jumps are gated to the settled hold phase only (so they don't
-// fight the migration). With a 360-tick hold we want a couple of eligible
-// windows per epoch; 120 ticks between attempts gives 2 firing chances
-// (initial offset +30, then +120, then +120 lands past hold-end).
+// fight the migration). With a 360-tick hold (steps 900..1260) and an
+// initial offset of +30, attempts land at steps 930 / 1050 / 1170 — three
+// eligible windows per epoch, each firing with ~50% probability, so the
+// expected snap-jump count per epoch is ~1.5 (still rare relative to the
+// ~21s epoch length).
 const SNAP_PERIOD_STEPS = 120;
 const TAU = Math.PI * 2;
 
