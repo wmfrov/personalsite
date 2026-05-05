@@ -18,7 +18,7 @@ export const PALETTES: Palette[] = [
   { id: 'memphis',      name: 'MEMPHIS',      bg: '#f0ece2', ink: '#111111', accent1: '#ff3b3f', accent2: '#22577a', accent3: '#ffd400' },
   { id: 'construction', name: 'CONSTRUCTION', bg: '#e8e6df', ink: '#0a0a0a', accent1: '#ff8200', accent2: '#1457a6', accent3: '#fff200' },
   { id: 'botanical',    name: 'BOTANICAL',    bg: '#efece2', ink: '#0e0e0e', accent1: '#bb4430', accent2: '#7ebc89', accent3: '#3d348b' },
-  { id: 'mono',         name: 'MONO+ONE',     bg: '#eeefe9', ink: '#0a0a0a', accent1: '#ff4d00', accent2: '#0a0a0a', accent3: '#0a0a0a' },
+  { id: 'mono',         name: 'MONO+ONE',     bg: '#eeefe9', ink: '#0a0a0a', accent1: '#ff4d00', accent2: '#5a5a5a', accent3: '#9a9a9a' },
   { id: 'inverted',     name: 'INVERTED',     bg: '#0e0e0e', ink: '#eeefe9', accent1: '#ff5a36', accent2: '#7be0a3', accent3: '#ffd166', inverted: true },
 ];
 

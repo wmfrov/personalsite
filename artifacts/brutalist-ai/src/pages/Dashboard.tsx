@@ -268,19 +268,6 @@ export default function Dashboard() {
             </div>
           )}
 
-          {exportState.active && (
-            <div
-              className="absolute top-4 left-4 z-50 px-2 py-1 text-xs font-bold font-mono"
-              style={{
-                background: palette.ink,
-                color: palette.bg,
-                borderBottom: `3px solid ${palette.ink}`,
-              }}
-            >
-              SEED:{seedData.hash.substring(0, 8)} · {palette.name}
-            </div>
-          )}
-
           <div className="w-full h-full flex flex-col md:flex-row gap-4">
             <div className="flex-[2] md:w-[65%] min-w-0 h-1/2 md:h-full">
               <EmbeddingSpace
