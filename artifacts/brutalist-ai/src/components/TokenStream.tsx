@@ -86,7 +86,7 @@ export function TokenStream({ seedData, paused = false, stepFrame = 0 }: TokenSt
     <div className="brutalist-panel h-full flex flex-col min-h-0">
       <div className="brutalist-label shrink-0 flex justify-between">
         <span>TOKEN STREAM</span>
-        <span className="text-ph-red animate-pulse">● REC</span>
+        <span className={`text-ph-red ${paused ? '' : 'animate-pulse'}`}>● REC</span>
       </div>
       <div
         ref={containerRef}
@@ -94,7 +94,7 @@ export function TokenStream({ seedData, paused = false, stepFrame = 0 }: TokenSt
       >
         <span className="text-ph-yellow">{`> `}</span>
         {stream}
-        <span className="caret-blink">█</span>
+        <span className={paused ? '' : 'caret-blink'}>█</span>
       </div>
     </div>
   );
