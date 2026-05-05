@@ -63,8 +63,29 @@ export default function Dashboard() {
 
   // Shared frame counter; panels apply +/- deltas against their snapshot history.
   const [stepFrame, setStepFrame] = useState(0);
+  // Buffered text for the frame input so the user can type freely without each
+  // keystroke immediately driving the (expensive) frame jump. Committed on
+  // Enter / blur. Kept in sync with `stepFrame` whenever the frame changes
+  // through any other path (slider, buttons, keyboard).
+  const [frameInputText, setFrameInputText] = useState('0');
+  useEffect(() => {
+    setFrameInputText(String(stepFrame));
+  }, [stepFrame]);
   // Bumped on entering export mode to remount panels + reset history.
   const [resetKey, setResetKey] = useState(0);
+
+  // Scrubber range. The slider covers a useful 10-second window at 60fps;
+  // the number input lets users go beyond when they want a really late frame.
+  const SCRUB_MAX = 600;
+  const FRAMES_PER_SECOND = 60;
+
+  const jumpFrame = (delta: number) => {
+    setStepFrame(f => Math.max(0, f + delta));
+  };
+  const setFrameClamped = (n: number) => {
+    if (!Number.isFinite(n)) return;
+    setStepFrame(Math.max(0, Math.floor(n)));
+  };
 
   const dashboardRef = useRef<HTMLDivElement>(null);
 
@@ -121,14 +142,40 @@ export default function Dashboard() {
           setExportState({ active: false, w: 0, h: 0 });
           return;
         }
+        // Skip frame-stepping shortcuts while focus is in an input/textarea
+        // so the frame number field and any future text inputs work normally.
+        if (typing) return;
+        // Arrow keys: ±1 frame, with Shift for ±10 (faster fine-tuning).
         if (e.key === 'ArrowRight') {
           e.preventDefault();
-          setStepFrame(f => f + 1);
+          jumpFrame(e.shiftKey ? 10 : 1);
           return;
         }
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
-          setStepFrame(f => Math.max(0, f - 1));
+          jumpFrame(e.shiftKey ? -10 : -1);
+          return;
+        }
+        // Page Up / Page Down: ±1 second jumps for fast travel.
+        if (e.key === 'PageDown') {
+          e.preventDefault();
+          jumpFrame(FRAMES_PER_SECOND);
+          return;
+        }
+        if (e.key === 'PageUp') {
+          e.preventDefault();
+          jumpFrame(-FRAMES_PER_SECOND);
+          return;
+        }
+        // Home / End: jump to start / end of the slider range.
+        if (e.key === 'Home') {
+          e.preventDefault();
+          setFrameClamped(0);
+          return;
+        }
+        if (e.key === 'End') {
+          e.preventDefault();
+          setFrameClamped(SCRUB_MAX);
           return;
         }
         if (e.key === 'ArrowDown') {
@@ -237,36 +284,147 @@ export default function Dashboard() {
               : { background: 'var(--bg)' }
           }
         >
-          {exportState.active && (
-            <div
-              id="export-instruction-bar"
-              className="absolute -top-12 left-0 right-0 flex items-center justify-between px-4 py-2 font-bold z-50"
-              style={{
-                background: palette.accent3,
-                color: palette.ink,
-                border: `3px solid ${palette.ink}`,
-                boxShadow: `4px 4px 0 0 ${palette.ink}`,
-                transform: 'none',
-              }}
-            >
-              <span>Exporting: {exportState.w} × {exportState.h} · frame {stepFrame} · palette {palette.name}</span>
-              <div className="flex items-center gap-3">
-                <span className="text-xs">← Step Back | → Step Forward | ESC Exit</span>
-                <button
-                  onClick={downloadImage}
-                  className="px-3 py-1 text-sm font-bold cursor-pointer"
-                  style={{
-                    background: palette.ink,
-                    color: palette.bg,
-                    border: `3px solid ${palette.ink}`,
-                    boxShadow: `4px 4px 0 0 ${palette.ink}`,
-                  }}
-                >
-                  ↓ DOWNLOAD PNG
-                </button>
+          {exportState.active && (() => {
+            const seconds = (stepFrame / FRAMES_PER_SECOND).toFixed(1);
+            const jumpBtnStyle = {
+              background: palette.bg,
+              color: palette.ink,
+              border: `3px solid ${palette.ink}`,
+              padding: '2px 8px',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              minWidth: 36,
+            } as React.CSSProperties;
+            return (
+              <div
+                id="export-instruction-bar"
+                className="absolute -top-24 left-0 right-0 flex flex-col gap-2 px-4 py-2 font-bold z-50"
+                style={{
+                  background: palette.accent3,
+                  color: palette.ink,
+                  border: `3px solid ${palette.ink}`,
+                  boxShadow: `4px 4px 0 0 ${palette.ink}`,
+                  transform: 'none',
+                }}
+              >
+                {/* Row 1: status + download */}
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm">
+                    Exporting: {exportState.w} × {exportState.h} · palette {palette.name}
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] opacity-80 font-normal">
+                      ← / → step · Shift+← / → ×10 · PgUp / PgDn ±1s · Home / End · ↓ download · ESC exit
+                    </span>
+                    <button
+                      onClick={downloadImage}
+                      className="px-3 py-1 text-sm font-bold cursor-pointer"
+                      style={{
+                        background: palette.ink,
+                        color: palette.bg,
+                        border: `3px solid ${palette.ink}`,
+                        boxShadow: `4px 4px 0 0 ${palette.ink}`,
+                      }}
+                    >
+                      ↓ DOWNLOAD PNG
+                    </button>
+                  </div>
+                </div>
+
+                {/* Row 2: scrubber + jump buttons + frame input */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => jumpFrame(-10 * FRAMES_PER_SECOND)}
+                    style={jumpBtnStyle}
+                    title="Back 10 seconds (600 frames)"
+                  >
+                    ⏮ −10s
+                  </button>
+                  <button
+                    onClick={() => jumpFrame(-FRAMES_PER_SECOND)}
+                    style={jumpBtnStyle}
+                    title="Back 1 second (60 frames) — PgUp"
+                  >
+                    ⏪ −1s
+                  </button>
+                  <button
+                    onClick={() => jumpFrame(-1)}
+                    style={jumpBtnStyle}
+                    title="Back 1 frame — ←"
+                  >
+                    ◀
+                  </button>
+
+                  <input
+                    type="range"
+                    min={0}
+                    max={SCRUB_MAX}
+                    step={1}
+                    value={Math.min(stepFrame, SCRUB_MAX)}
+                    onChange={e => setFrameClamped(parseInt(e.target.value, 10))}
+                    className="flex-1 cursor-pointer"
+                    style={{ accentColor: palette.ink }}
+                    aria-label="Frame scrubber"
+                  />
+
+                  <button
+                    onClick={() => jumpFrame(1)}
+                    style={jumpBtnStyle}
+                    title="Forward 1 frame — →"
+                  >
+                    ▶
+                  </button>
+                  <button
+                    onClick={() => jumpFrame(FRAMES_PER_SECOND)}
+                    style={jumpBtnStyle}
+                    title="Forward 1 second (60 frames) — PgDn"
+                  >
+                    +1s ⏩
+                  </button>
+                  <button
+                    onClick={() => jumpFrame(10 * FRAMES_PER_SECOND)}
+                    style={jumpBtnStyle}
+                    title="Forward 10 seconds (600 frames)"
+                  >
+                    +10s ⏭
+                  </button>
+
+                  <span className="text-[11px] font-normal opacity-80 ml-2">FRAME</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={frameInputText}
+                    onChange={e => setFrameInputText(e.target.value)}
+                    onBlur={() => {
+                      const n = parseInt(frameInputText, 10);
+                      if (Number.isFinite(n)) setFrameClamped(n);
+                      else setFrameInputText(String(stepFrame));
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const n = parseInt(frameInputText, 10);
+                        if (Number.isFinite(n)) setFrameClamped(n);
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    className="px-2 py-0.5 text-sm font-mono font-bold w-20 text-right"
+                    style={{
+                      background: palette.bg,
+                      color: palette.ink,
+                      border: `3px solid ${palette.ink}`,
+                    }}
+                    aria-label="Frame number"
+                  />
+                  <span className="text-[11px] font-normal opacity-80 tabular-nums">
+                    / {SCRUB_MAX}+ · {seconds}s
+                  </span>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           <div className="w-full h-full flex flex-col md:flex-row gap-4">
             <div className="flex-[2] md:w-[65%] min-w-0 h-1/2 md:h-full">
