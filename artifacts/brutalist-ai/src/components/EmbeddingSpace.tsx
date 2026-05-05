@@ -21,10 +21,12 @@ const TRAIL_LIFETIME_MS = 900;
 //   2. CONVERGE  — dots ease from those random starts toward their
 //                  cluster's converged home, ease-out cubic.
 //   3. HOLD      — dots remain at home; snap-jumps may fire here.
-// At ~60fps this is ~1.5s + 6s + 1.5s ≈ 9s per epoch.
+// At ~60fps this is ~1.5s + 6s + 3s ≈ 10.5s per epoch — long enough that
+// the converged state has visible "settled readability" before the next
+// disperse begins.
 const EPOCH_DISPERSE_STEPS = 90;
 const EPOCH_CONVERGE_STEPS = 360;
-const EPOCH_HOLD_STEPS = 90;
+const EPOCH_HOLD_STEPS = 180;
 const EPOCH_TOTAL_STEPS = EPOCH_DISPERSE_STEPS + EPOCH_CONVERGE_STEPS + EPOCH_HOLD_STEPS;
 const HOLD_PHASE_START_STEP = EPOCH_DISPERSE_STEPS + EPOCH_CONVERGE_STEPS;
 // Tight Gaussian sigma around the cluster centroid at peak sharpness —
