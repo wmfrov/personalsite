@@ -149,16 +149,29 @@ export default function Dashboard() {
 
   const paused = exportState.active;
 
+  // Recompute export-preview scale on viewport resize so the frozen banner
+  // doesn't overflow / stay tiny when the user resizes the window.
+  const [viewport, setViewport] = useState({ w: typeof window !== 'undefined' ? window.innerWidth : 1280, h: typeof window !== 'undefined' ? window.innerHeight : 720 });
+  useEffect(() => {
+    if (!exportState.active) return;
+    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [exportState.active]);
+
   return (
     <div className="min-h-screen bg-cream flex flex-col font-mono relative overflow-hidden">
-      {!hideChrome && !exportState.active && (
+      <div
+        className={`transition-opacity duration-200 ${(!hideChrome && !exportState.active) ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 overflow-hidden'}`}
+      >
         <Header
           seed={seed}
           setSeed={setSeed}
           seedData={seedData}
           onExport={() => setIsModalOpen(true)}
         />
-      )}
+      </div>
 
       <ExportModal
         isOpen={isModalOpen}
@@ -175,7 +188,7 @@ export default function Dashboard() {
               ? {
                   width: exportState.w,
                   height: exportState.h,
-                  transform: `scale(min(1, ${(window.innerWidth - 64) / exportState.w}, ${(window.innerHeight - 120) / exportState.h}))`,
+                  transform: `scale(min(1, ${(viewport.w - 64) / exportState.w}, ${(viewport.h - 120) / exportState.h}))`,
                   transformOrigin: 'center center',
                 }
               : {}
@@ -232,7 +245,9 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {!hideChrome && <Sticker />}
+          <div className={`transition-opacity duration-200 ${hideChrome ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <Sticker />
+          </div>
         </div>
       </div>
     </div>
