@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { SeedData, derivePrng } from '../lib/hash';
+import { SeedData, derivePrng, PanelSlot } from '../lib/hash';
 
 interface LossProps {
   seedData: SeedData;
@@ -15,8 +15,8 @@ export function Loss({ seedData, paused = false, stepFrame = 0 }: LossProps) {
   const levelRef = useRef(BLOCKS.length - 1);
 
   useEffect(() => {
-    const initPrng = derivePrng(seedData.seedInt, 20);
-    animPrngRef.current = derivePrng(seedData.seedInt, 21);
+    const initPrng = derivePrng(seedData, PanelSlot.LossInit);
+    animPrngRef.current = derivePrng(seedData, PanelSlot.LossAnim);
     let currentLevel = BLOCKS.length - 1;
     let initialCurve = '';
 

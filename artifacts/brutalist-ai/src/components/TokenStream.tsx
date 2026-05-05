@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { SeedData, derivePrng } from '../lib/hash';
+import { SeedData, derivePrng, PanelSlot } from '../lib/hash';
 import { generateCharGrams } from '../lib/tokens';
 
 interface TokenStreamProps {
@@ -18,7 +18,7 @@ export function TokenStream({ seedData, paused = false, stepFrame = 0 }: TokenSt
   const streamRef = useRef('');
 
   useEffect(() => {
-    const prng = derivePrng(seedData.seedInt, 40);
+    const prng = derivePrng(seedData, PanelSlot.TokenStream);
     const newTokens: string[] = [];
     for (let i = 0; i < 80; i++) {
       newTokens.push(generateCharGrams(seedData.input, prng));

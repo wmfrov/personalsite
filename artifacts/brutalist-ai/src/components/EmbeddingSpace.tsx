@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { SeedData, derivePrng } from '../lib/hash';
+import { SeedData, derivePrng, PanelSlot } from '../lib/hash';
 import { generateEmbeddingTokens } from '../lib/tokens';
 
 interface EmbeddingSpaceProps {
@@ -37,10 +37,10 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
   // Initialize dots from seed
   useEffect(() => {
     // Dedicated PRNG for layout/initialization (offset 1)
-    const prng = derivePrng(seedData.seedInt, 1);
+    const prng = derivePrng(seedData, PanelSlot.EmbeddingLayout);
     // Dedicated PRNG for runtime animation (offset 2) — keeps same seed
     // producing same snap-jump sequence regardless of other panels.
-    animPrngRef.current = derivePrng(seedData.seedInt, 2);
+    animPrngRef.current = derivePrng(seedData, PanelSlot.EmbeddingAnim);
     const numDots = 40;
     const tokens = generateEmbeddingTokens(numDots - 1, prng);
     

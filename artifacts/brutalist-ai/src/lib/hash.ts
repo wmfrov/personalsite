@@ -25,37 +25,58 @@ export interface SeedData {
   accentColor: string;
   youX: number;
   youY: number;
+  /** Per-panel seeds parsed directly from non-overlapping SHA-256 slices. */
+  panelSeeds: number[];
 }
 
-// Each panel gets its own PRNG seeded from a different slice of the hash so
-// runtime randomness stays deterministic per seed and panel ordering does not
-// leak into other panels' streams. The remainder of the hash beyond the first
-// 14 chars feeds these derived seeds.
-export function derivePrng(seedInt: number, offset: number) {
-  // Mix the base seed with a per-panel offset so each panel's stream is
-  // distinct but still fully derived from the input hash.
-  const mixed = (seedInt ^ Math.imul(offset + 1, 0x9E3779B1)) | 0;
-  return mulberry32(mixed);
+/** Panel slot indices into SeedData.panelSeeds. */
+export const PanelSlot = {
+  EmbeddingLayout: 0,
+  EmbeddingAnim: 1,
+  WeightsInit: 2,
+  WeightsFlicker: 3,
+  LossInit: 4,
+  LossAnim: 5,
+  ProbsInit: 6,
+  ProbsJitter: 7,
+  TokenStream: 8,
+} as const;
+
+/**
+ * Build a fresh PRNG for one panel. Each panel slot maps to a non-overlapping
+ * 5-hex-char slice of the SHA-256 hash, so randomness is fully derived from
+ * the input string and stays deterministic per seed.
+ */
+export function derivePrng(seed: SeedData, slot: number) {
+  return mulberry32(seed.panelSeeds[slot] ?? seed.seedInt);
 }
 
 export async function parseSeed(input: string): Promise<SeedData> {
   const hash = await generateHash(input);
 
-  // First 8 chars -> integer seed for PRNG
+  // 0..8   -> integer seed for the master PRNG
   const seedInt = parseInt(hash.substring(0, 8), 16);
   const prng = mulberry32(seedInt);
 
-  // Next 2 chars -> accent color (mod 3)
+  // 8..10  -> accent color (PostHog red / blue / yellow)
   const accentByte = parseInt(hash.substring(8, 10), 16);
-  const accents = ['#f54e00', '#1d4aff', '#f9bd2b']; // red, blue, yellow
+  const accents = ['#f54e00', '#1d4aff', '#f9bd2b'];
   const accentColor = accents[accentByte % 3];
 
-  // Next 4 chars -> position of "you" dot (split into x and y bytes)
+  // 10..14 -> "you" dot position
   const xByte = parseInt(hash.substring(10, 12), 16);
   const yByte = parseInt(hash.substring(12, 14), 16);
+  const youX = xByte / 255;
+  const youY = yByte / 255;
 
-  const youX = xByte / 255; // 0.0 to 1.0
-  const youY = yByte / 255; // 0.0 to 1.0
+  // 14..59 -> nine 5-hex-char panel seeds (45 chars; 5 chars reserved tail)
+  const panelSeeds: number[] = [];
+  const SLOT_LEN = 5;
+  const NUM_SLOTS = 9;
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const start = 14 + i * SLOT_LEN;
+    panelSeeds.push(parseInt(hash.substring(start, start + SLOT_LEN), 16));
+  }
 
   return {
     input,
@@ -65,5 +86,6 @@ export async function parseSeed(input: string): Promise<SeedData> {
     accentColor,
     youX,
     youY,
+    panelSeeds,
   };
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { SeedData, derivePrng } from '../lib/hash';
+import { SeedData, derivePrng, PanelSlot } from '../lib/hash';
 
 interface ProbabilitiesProps {
   seedData: SeedData;
@@ -20,8 +20,8 @@ export function Probabilities({ seedData, paused = false, stepFrame = 0 }: Proba
   const jitterPrngRef = useRef<() => number>(() => 0);
 
   useEffect(() => {
-    const initPrng = derivePrng(seedData.seedInt, 30);
-    jitterPrngRef.current = derivePrng(seedData.seedInt, 31);
+    const initPrng = derivePrng(seedData, PanelSlot.ProbsInit);
+    jitterPrngRef.current = derivePrng(seedData, PanelSlot.ProbsJitter);
     const newBars: ProbBar[] = [];
 
     const pool = [...FAKE_LABELS];

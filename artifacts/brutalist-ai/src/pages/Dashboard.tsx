@@ -24,9 +24,13 @@ export default function Dashboard() {
   const [exportState, setExportState] = useState<ExportState>({ active: false, w: 0, h: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Global frame step counter — incremented by Arrow keys in export mode so
-  // every animated panel advances exactly one tick per press.
+  // Global frame step counter — incremented by ArrowRight in export mode so
+  // every animated panel advances exactly one tick per press. ArrowLeft
+  // rewinds to frame 0 and bumps `resetKey` to remount panels (true reverse
+  // stepping would require frame-by-frame state history; rewind-to-start is
+  // a clean, deterministic alternative).
   const [stepFrame, setStepFrame] = useState(0);
+  const [resetKey, setResetKey] = useState(0);
 
   const dashboardRef = useRef<HTMLDivElement>(null);
 
@@ -72,9 +76,15 @@ export default function Dashboard() {
           setExportState({ active: false, w: 0, h: 0 });
           return;
         }
-        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        if (e.key === 'ArrowRight') {
           e.preventDefault();
           setStepFrame(f => f + 1);
+          return;
+        }
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          setStepFrame(0);
+          setResetKey(k => k + 1);
           return;
         }
         if (e.key === 'ArrowDown') {
@@ -93,6 +103,7 @@ export default function Dashboard() {
   const handleExportPreset = (w: number, h: number) => {
     setIsModalOpen(false);
     setStepFrame(0);
+    setResetKey(k => k + 1);
     setExportState({ active: true, w, h });
   };
 
@@ -160,11 +171,20 @@ export default function Dashboard() {
           {exportState.active && (
             <div
               id="export-instruction-bar"
-              className="absolute -top-12 left-0 right-0 flex justify-between bg-ph-yellow border-[3px] border-ink px-4 py-2 font-bold z-50 text-ink shadow-[4px_4px_0_0_#000]"
+              className="absolute -top-12 left-0 right-0 flex items-center justify-between bg-ph-yellow border-[3px] border-ink px-4 py-2 font-bold z-50 text-ink shadow-[4px_4px_0_0_#000]"
               style={{ transform: 'none', borderRadius: 0 }}
             >
               <span>Exporting: {exportState.w} × {exportState.h} · frame {stepFrame}</span>
-              <span>←/→ Step Frame | ↓ Download PNG | ESC Exit</span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs">← Rewind | → Step | ESC Exit</span>
+                <button
+                  onClick={downloadImage}
+                  className="bg-ink text-cream px-3 py-1 text-sm font-bold border-[3px] border-ink shadow-[4px_4px_0_0_#000] hover:bg-ph-red hover:text-cream transition-colors duration-0"
+                  style={{ borderRadius: 0 }}
+                >
+                  ↓ DOWNLOAD PNG
+                </button>
+              </div>
             </div>
           )}
 
@@ -176,25 +196,25 @@ export default function Dashboard() {
 
           <div className="w-full h-full flex flex-col md:flex-row gap-4">
             <div className="flex-[2] md:w-[65%] min-w-0 h-1/2 md:h-full">
-              <EmbeddingSpace seedData={seedData} paused={paused} stepFrame={stepFrame} />
+              <EmbeddingSpace key={`emb-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
             </div>
 
             <div className="flex-1 md:w-[35%] flex flex-col gap-4 min-w-0 h-1/2 md:h-full">
               <div className="flex-1 flex gap-4 min-h-0">
                 <div className="flex-1">
-                  <Weights seedData={seedData} paused={paused} stepFrame={stepFrame} />
+                  <Weights key={`w-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
                 </div>
                 <div className="flex-[1.5]">
-                  <TokenStream seedData={seedData} paused={paused} stepFrame={stepFrame} />
+                  <TokenStream key={`t-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
                 </div>
               </div>
 
               <div className="flex-[0.8] min-h-0">
-                <Loss seedData={seedData} paused={paused} stepFrame={stepFrame} />
+                <Loss key={`l-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
               </div>
 
               <div className="flex-1 min-h-0">
-                <Probabilities seedData={seedData} paused={paused} stepFrame={stepFrame} />
+                <Probabilities key={`p-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
               </div>
             </div>
           </div>

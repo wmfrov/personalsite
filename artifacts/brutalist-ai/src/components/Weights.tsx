@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { SeedData, derivePrng } from '../lib/hash';
+import { SeedData, derivePrng, PanelSlot } from '../lib/hash';
 
 interface WeightsProps {
   seedData: SeedData;
@@ -13,8 +13,8 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
   const flickerPrngRef = useRef<() => number>(() => 0);
 
   useEffect(() => {
-    const initPrng = derivePrng(seedData.seedInt, 10);
-    flickerPrngRef.current = derivePrng(seedData.seedInt, 11);
+    const initPrng = derivePrng(seedData, PanelSlot.WeightsInit);
+    flickerPrngRef.current = derivePrng(seedData, PanelSlot.WeightsFlicker);
     const initialWeights: string[] = [];
     for (let i = 0; i < 12; i++) {
       initialWeights.push(formatWeight(initPrng));
