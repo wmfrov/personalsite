@@ -41,12 +41,19 @@ export default function Dashboard() {
     if (hash) setSeed(decodeURIComponent(hash));
   }, []);
 
-  // Rehash when seed changes (committed via Enter / blur, not per keystroke)
+  // Rehash when seed changes (committed via Enter / blur, not per keystroke).
+  // Guard against stale async commits if `seed` changes again before the
+  // previous SHA-256 digest resolves.
   useEffect(() => {
+    let cancelled = false;
     parseSeed(seed).then(data => {
+      if (cancelled) return;
       setSeedData(data);
       window.location.hash = encodeURIComponent(seed);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [seed]);
 
   // Keyboard shortcuts
