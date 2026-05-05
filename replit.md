@@ -25,3 +25,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## Artifacts
+
+- **brutalist-ai** (`artifacts/brutalist-ai/`) — React + Vite single-page brutalist "AI × PostHog" dashboard. Visuals derived deterministically from SHA-256(seed) via Mulberry32 PRNG. Centerpiece EMBEDDING SPACE with ~40 drifting dots + 4 supporting panels (WEIGHTS, TOKEN STREAM, LOSS, PROBABILITIES). Keyboard: `f` fullscreen, `h` hide chrome. Export modal supports LinkedIn (1584×396) / X (1500×500) / Custom banners via html-to-image. Seed permalink in `window.location.hash`. No backend, no DB.

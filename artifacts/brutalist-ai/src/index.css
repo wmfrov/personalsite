@@ -1,0 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap');
+@import "tailwindcss";
+
+@theme inline {
+  --font-mono: 'IBM Plex Mono', monospace;
+  --color-background: #eeefe9;
+  --color-foreground: #000;
+  --color-cream: #eeefe9;
+  --color-ink: #000;
+  --color-ph-red: #f54e00;
+  --color-ph-blue: #1d4aff;
+  --color-ph-yellow: #f9bd2b;
+}
+
+:root {
+  --cream: #eeefe9;
+  --ink: #000;
+  --ph-red: #f54e00;
+  --ph-blue: #1d4aff;
+  --ph-yellow: #f9bd2b;
+  --shadow-brutal: 4px 4px 0 0 #000;
+}
+
+@layer base {
+  * {
+    @apply border-ink rounded-none;
+  }
+  
+  body {
+    @apply font-mono antialiased bg-[#eeefe9] text-[#000] overflow-x-hidden;
+  }
+}
+
+.brutalist-panel {
+  @apply border-[3px] border-ink bg-cream relative;
+  box-shadow: var(--shadow-brutal);
+}
+
+.brutalist-label {
+  @apply bg-ink text-cream px-2 py-1 text-xs uppercase tracking-widest font-bold border-b-[3px] border-ink;
+}
+
+.brutalist-button {
+  @apply border-[3px] border-ink bg-cream text-ink px-4 py-2 uppercase font-bold text-sm tracking-widest cursor-pointer hover:bg-ink hover:text-cream transition-colors duration-0 active:translate-y-[4px] active:translate-x-[4px] active:shadow-none;
+  box-shadow: var(--shadow-brutal);
+}
+
+.caret-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
