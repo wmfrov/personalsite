@@ -21,26 +21,29 @@ const TRAIL_LIFETIME_MS = 900;
 //   2. CONVERGE  — dots ease from those random starts toward their
 //                  cluster's converged home, ease-out cubic.
 //   3. HOLD      — dots remain at home; snap-jumps may fire here.
-// At ~60fps this is ~1.5s + 6s + 3s ≈ 10.5s per epoch — long enough that
-// the converged state has visible "settled readability" before the next
-// disperse begins.
-const EPOCH_DISPERSE_STEPS = 90;
-const EPOCH_CONVERGE_STEPS = 360;
-const EPOCH_HOLD_STEPS = 180;
+// At ~60fps this is ~3s + 12s + 6s ≈ 21s per epoch — slow enough that the
+// migration reads as gradual training and the converged state has a real
+// "settled readability" beat before the next disperse begins.
+const EPOCH_DISPERSE_STEPS = 180;
+const EPOCH_CONVERGE_STEPS = 720;
+const EPOCH_HOLD_STEPS = 360;
 const EPOCH_TOTAL_STEPS = EPOCH_DISPERSE_STEPS + EPOCH_CONVERGE_STEPS + EPOCH_HOLD_STEPS;
 const HOLD_PHASE_START_STEP = EPOCH_DISPERSE_STEPS + EPOCH_CONVERGE_STEPS;
-// Tight Gaussian sigma around the cluster centroid at peak sharpness —
-// less than half the old free-drift sigma (0.085), so converged epochs
-// look visibly cleaner than the old steady state ever did.
-const HOME_SIGMA = 0.035;
+// Gaussian sigma around the cluster centroid at peak convergence. Cluster
+// centroids sit at ~0.27 / 0.73 (≈0.46 apart), so a sigma of 0.11 gives
+// each blob a ~2σ visual radius near 0.22 — adjacent clusters reach the
+// 0.5 midline and softly overlap there, while still leaving four
+// distinguishable colored regions in the four quadrants.
+const HOME_SIGMA = 0.11;
 // Tiny per-frame sinusoidal jitter applied on top of the eased base,
 // driven by per-dot phases — keeps the cloud breathing even at peak
 // sharpness without breaking the cluster shape.
 const JITTER_AMP = 0.006;
 // Snap-jumps are gated to the settled hold phase only (so they don't
-// fight the migration). One eligible attempt every SNAP_PERIOD_STEPS
-// ticks, with ~50% chance of firing.
-const SNAP_PERIOD_STEPS = 180;
+// fight the migration). With a 360-tick hold we want a couple of eligible
+// windows per epoch; 120 ticks between attempts gives 2 firing chances
+// (initial offset +30, then +120, then +120 lands past hold-end).
+const SNAP_PERIOD_STEPS = 120;
 const TAU = Math.PI * 2;
 
 // Connection-layer tunables (replaces convex hulls).
