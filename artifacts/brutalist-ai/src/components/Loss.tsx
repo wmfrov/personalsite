@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
+import { CycleState, computeCycle, easeOutCubic } from '../lib/trainingCycle';
+import { useCycleStore } from '../contexts/TrainingCycleContext';
 
 interface LossProps {
   seedData: SeedData;
@@ -19,24 +21,43 @@ interface Snapshot {
 }
 
 const WINDOW = 96;
-// Floating-point analog of the old 0..6 integer level scale, normalized
-// to [0, 1] for plotting. Train and val curves share the same tick
-// engine but with slightly different parameters so they don't overlap.
 const Y_MIN = 0;
 const Y_MAX = 1;
+
+// Loss base level peaks at the start of disperse, climbs through the
+// disperse phase, then descends through converge with an ease-out, and
+// settles low through hold. Reads as: model just lost a bunch of
+// information at the epoch boundary, learns it back, and stabilizes.
+const LOSS_PEAK = 0.95;
+const LOSS_FLOOR = 0.18;
+
+function targetTrainLoss(cycle: CycleState): number {
+  if (cycle.phase === 'disperse') {
+    // Quick climb to the spike.
+    return LOSS_FLOOR + (LOSS_PEAK - LOSS_FLOOR) * easeOutCubic(cycle.phaseProgress);
+  }
+  if (cycle.phase === 'converge') {
+    // Long descent.
+    return LOSS_PEAK + (LOSS_FLOOR - LOSS_PEAK) * easeOutCubic(cycle.phaseProgress);
+  }
+  // hold: settled near the floor with a tiny continued sag.
+  return LOSS_FLOOR - 0.02 * easeOutCubic(cycle.phaseProgress);
+}
 
 export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossProps) {
   const [values, setValues] = useState<number[]>([]);
   const [valValues, setValValues] = useState<number[]>([]);
   const [step, setStep] = useState<number>(0);
   const animPrngRef = useRef<SeededPrng | null>(null);
-  const levelRef = useRef(1);
-  const valLevelRef = useRef(1);
+  const levelRef = useRef(LOSS_FLOOR);
+  const valLevelRef = useRef(LOSS_FLOOR + 0.06);
   const stepRef = useRef(0);
   const historyRef = useRef<Snapshot[]>([]);
   const lastFrameRef = useRef(0);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  const cycleStore = useCycleStore();
 
   useEffect(() => {
     const initPrng = derivePrng(seedData, PanelSlot.LossInit);
@@ -45,12 +66,16 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
     lastFrameRef.current = 0;
     stepRef.current = 0;
 
-    let lvl = 0.95;
-    let valLvl = 0.92;
+    // Pre-fill the window from the *initial* cycle (rawStep 0 → epoch 0,
+    // disperse phase 0%) so the panel mounts with a coherent slope into
+    // the current state instead of a flat baseline.
+    let lvl = LOSS_FLOOR;
+    let valLvl = LOSS_FLOOR + 0.06;
     const init: number[] = [];
     const valInit: number[] = [];
+    const startCycle = computeCycle(0);
     for (let i = 0; i < WINDOW; i++) {
-      lvl = nextLevel(lvl, initPrng);
+      lvl = nextLevel(lvl, startCycle, initPrng);
       valLvl = nextValLevel(valLvl, lvl, initPrng);
       init.push(lvl);
       valInit.push(valLvl);
@@ -80,9 +105,10 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
     valCur: number[],
     lvl: number,
     valLvl: number,
+    cycle: CycleState,
     prng: SeededPrng,
   ) => {
-    const nextLvl = nextLevel(lvl, prng);
+    const nextLvl = nextLevel(lvl, cycle, prng);
     const nextValLvl = nextValLevel(valLvl, nextLvl, prng);
     return {
       values: [...cur.slice(1), nextLvl],
@@ -100,8 +126,9 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
     let cleanup: () => void = () => {};
     const start = setTimeout(() => {
       const interval = setInterval(() => {
+        const cycle = cycleStore.get();
         setValues(prev => {
-          const r = tick(prev, valValuesRefRead(), levelRef.current, valLevelRef.current, prng);
+          const r = tick(prev, valValuesRefRead(), levelRef.current, valLevelRef.current, cycle, prng);
           levelRef.current = r.level;
           valLevelRef.current = r.valLevel;
           setValValues(r.valValues);
@@ -127,6 +154,9 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
   }, [valValues]);
   const valValuesRefRead = () => valValuesStateRef.current;
 
+  // Paused: each stepFrame delta is one loss tick. Each tick reads the
+  // shared cycle at that exact frame so the curve's phase responses stay
+  // bit-deterministic — the loss panel is a pure function of stepFrame.
   useEffect(() => {
     if (!paused || values.length === 0 || !animPrngRef.current) return;
     const prng = animPrngRef.current;
@@ -146,7 +176,8 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
             step: stepRef.current,
             prngState: prng.getState(),
           });
-          const r = tick(s, sv, lvl, valLvl, prng);
+          const cycle = computeCycle(lastFrameRef.current + i + 1);
+          const r = tick(s, sv, lvl, valLvl, cycle, prng);
           s = r.values;
           sv = r.valValues;
           lvl = r.level;
@@ -319,15 +350,13 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
   );
 }
 
-// Train-loss tick: occasional spike up, otherwise drift down. Bounded to
-// [0.02, 1.0] to keep the visible curve interesting.
-function nextLevel(prev: number, prng: SeededPrng): number {
-  const r = prng();
-  let next = prev;
-  if (r < 0.08) next = Math.min(1, prev + 0.15 + prng() * 0.2);
-  else if (r < 0.5) next = Math.max(0.02, prev - prng() * 0.05);
-  else next = Math.max(0.02, Math.min(1, prev + (prng() - 0.5) * 0.04));
-  return next;
+// Train-loss tick: race toward the cycle-driven target with a small
+// per-tick noise so the curve still breathes between phase transitions.
+function nextLevel(prev: number, cycle: CycleState, prng: SeededPrng): number {
+  const target = targetTrainLoss(cycle);
+  const drift = (target - prev) * 0.4;
+  const noise = (prng() - 0.5) * 0.04;
+  return Math.max(0.02, Math.min(1, prev + drift + noise));
 }
 
 // Validation tracks training loss with a slight positive offset and
@@ -335,6 +364,6 @@ function nextLevel(prev: number, prng: SeededPrng): number {
 function nextValLevel(prev: number, train: number, prng: SeededPrng): number {
   const target = Math.min(1, train + 0.06);
   const drift = (target - prev) * 0.4;
-  const noise = (prng() - 0.5) * 0.03;
+  const noise = (prng() - 0.5) * 0.025;
   return Math.max(0.02, Math.min(1, prev + drift + noise));
 }

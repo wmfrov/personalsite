@@ -2,6 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
 import { generateEmbeddingTokens } from '../lib/tokens';
+import {
+  CycleState,
+  HOLD_PHASE_START_STEP,
+  computeCycle,
+} from '../lib/trainingCycle';
+import { useCycleRawStep } from '../contexts/TrainingCycleContext';
 
 // Spring damping that approximates `${SNAP_EASING}` settling over ~SNAP_DURATION_MS:
 // after a snap-jump teleports `baseX/baseY`, the per-frame spring (stiffness=lag*1.4,
@@ -13,22 +19,11 @@ const NUM_CLUSTERS = 4;
 const NUM_PINNED = 6;
 const TRAIL_LIFETIME_MS = 900;
 
-// Training-arc tunables. Each physics tick advances `step` by 1 (live and
-// paused/scrub). An epoch is three back-to-back phases:
-//   1. DISPERSE  — dots ease from their previous resting position to fresh
-//                  random start positions for this epoch (smooth
-//                  re-randomization, no hard cut at epoch boundaries).
-//   2. CONVERGE  — dots ease from those random starts toward their
-//                  cluster's converged home, ease-out cubic.
-//   3. HOLD      — dots remain at home; snap-jumps may fire here.
-// At ~60fps this is ~3s + 12s + 6s ≈ 21s per epoch — slow enough that the
-// migration reads as gradual training and the converged state has a real
-// "settled readability" beat before the next disperse begins.
-const EPOCH_DISPERSE_STEPS = 180;
-const EPOCH_CONVERGE_STEPS = 720;
-const EPOCH_HOLD_STEPS = 360;
-const EPOCH_TOTAL_STEPS = EPOCH_DISPERSE_STEPS + EPOCH_CONVERGE_STEPS + EPOCH_HOLD_STEPS;
-const HOLD_PHASE_START_STEP = EPOCH_DISPERSE_STEPS + EPOCH_CONVERGE_STEPS;
+// Training-arc tunables. The epoch / step / phase signal itself now
+// lives in `lib/trainingCycle.ts` and is shared by every panel via the
+// `TrainingCycleContext`. The embedding consumes that signal and
+// remains the visual writer (dot positions, snap-jumps, per-epoch
+// re-randomization).
 // Gaussian sigma around the cluster centroid at peak convergence. Cluster
 // centroids sit at ~0.27 / 0.73 (≈0.46 apart), so a sigma of 0.11 gives
 // each blob a ~2σ visual radius near 0.22 — adjacent clusters reach the
@@ -254,13 +249,15 @@ export function EmbeddingSpace({
   const dotsRef = useRef<Dot[]>([]);
   const animPrngRef = useRef<SeededPrng | null>(null);
   const historyRef = useRef<FrameSnapshot[]>([]);
-  const lastFrameRef = useRef(0);
   const trailsRef = useRef<Trail[]>([]);
-  // Training-arc state (refs so the per-tick physics closure reads fresh
-  // values without rebuilding the rAF loop every frame).
-  const stepRef = useRef(0);
-  const epochRef = useRef(0);
+  // Training-arc state. The canonical epoch/step/phase signal lives in
+  // `TrainingCycleContext`; embedding tracks the last-seen rawStep so it
+  // can compute deltas and run physics for each newly-elapsed tick.
+  const lastRawStepRef = useRef(0);
+  const lastEpochRef = useRef(0);
   const nextSnapStepRef = useRef(HOLD_PHASE_START_STEP + 30);
+
+  const cycleRawStep = useCycleRawStep();
 
   useEffect(() => {
     const prng = derivePrng(seedData, PanelSlot.EmbeddingLayout);
@@ -380,31 +377,23 @@ export function EmbeddingSpace({
     setClusters(newClusters);
     setDots(newDots);
     dotsRef.current = newDots;
-    stepRef.current = 0;
-    epochRef.current = 0;
+    lastRawStepRef.current = 0;
+    lastEpochRef.current = 0;
     nextSnapStepRef.current = HOLD_PHASE_START_STEP + 30;
     setEpochStep({ epoch: 0, step: 0 });
     historyRef.current = [];
     trailsRef.current = [];
-    lastFrameRef.current = 0;
   }, [seedData]);
 
-  const stepPhysics = (_dt: number) => {
-    // Each call advances exactly one tick. The live rAF loop calls us at
-    // ~60Hz; paused/scrub calls us per arrow press. Driving everything from
-    // a discrete step counter (not wall-clock dt) is what makes the paused
-    // export stream byte-identical across runs and machines.
-    stepRef.current += 1;
-    const step = stepRef.current;
+  const stepPhysics = (cycle: CycleState) => {
+    // One call advances exactly one shared tick. Cycle (epoch/step/phase)
+    // is provided by the `TrainingCycleProvider` and is byte-identical
+    // across every panel so the dashboard reads as one model training.
 
-    // Epoch reset: smoothly re-randomize. For every non-"you" dot, freeze
-    // its current visual position as `disperseFromX/Y` (so the new epoch's
-    // DISPERSE phase eases out of where it was), pick fresh random
-    // `startX/Y`, and resample `homeX/Y` from the dot's stable
-    // `clusterCentroidX/Y` + Gaussian. Resampling home is what restores
-    // cluster purity after snap-jumps mutated `homeX/Y` during the hold —
-    // each new epoch starts from a clean cluster again.
-    if (step >= EPOCH_TOTAL_STEPS) {
+    // Epoch boundary: smoothly re-randomize. Detected by epoch-number
+    // change rather than `step >= TOTAL` so we always run on the *new*
+    // epoch's first tick regardless of how the cycle was driven.
+    if (cycle.epoch !== lastEpochRef.current) {
       const ap = animPrngRef.current;
       if (ap) {
         for (const d of dotsRef.current) {
@@ -419,17 +408,17 @@ export function EmbeddingSpace({
           d.homeY = Math.max(0.04, Math.min(0.96, nv));
         }
       }
-      epochRef.current += 1;
-      stepRef.current = 0;
+      lastEpochRef.current = cycle.epoch;
       nextSnapStepRef.current = HOLD_PHASE_START_STEP + 30;
     }
 
     // Snap-jump: only eligible during the settled hold phase (suppressed
     // during DISPERSE + CONVERGE so it doesn't fight the migration).
     // Step-keyed schedule keeps it deterministic across pause/scrub.
-    const inHold = stepRef.current >= HOLD_PHASE_START_STEP;
-    if (inHold && stepRef.current >= nextSnapStepRef.current) {
-      nextSnapStepRef.current = stepRef.current + SNAP_PERIOD_STEPS;
+    const sStep = cycle.step;
+    const inHold = sStep >= HOLD_PHASE_START_STEP;
+    if (inHold && sStep >= nextSnapStepRef.current) {
+      nextSnapStepRef.current = sStep + SNAP_PERIOD_STEPS;
       const ap = animPrngRef.current;
       if (ap && ap() > 0.5 && dotsRef.current.length > 1) {
         const idx = 1 + Math.floor(ap() * (dotsRef.current.length - 1));
@@ -482,20 +471,10 @@ export function EmbeddingSpace({
     // dot's previous resting position to the new random start; CONVERGE
     // eases from the random start to the cluster home; HOLD pins at home.
     // Ease-out cubic in both moving phases — early motion feels fast, the
-    // tail of each phase feels patient.
-    let phase: 'disperse' | 'converge' | 'hold';
-    let phaseProgress: number;
-    const sStep = stepRef.current;
-    if (sStep < EPOCH_DISPERSE_STEPS) {
-      phase = 'disperse';
-      phaseProgress = sStep / EPOCH_DISPERSE_STEPS;
-    } else if (sStep < HOLD_PHASE_START_STEP) {
-      phase = 'converge';
-      phaseProgress = (sStep - EPOCH_DISPERSE_STEPS) / EPOCH_CONVERGE_STEPS;
-    } else {
-      phase = 'hold';
-      phaseProgress = 1;
-    }
+    // tail of each phase feels patient. The phase comes from the shared
+    // cycle so the panel stays in lockstep with every other panel.
+    const phase = cycle.phase;
+    const phaseProgress = phase === 'hold' ? 1 : cycle.phaseProgress;
     const eased = phase === 'hold' ? 1 : 1 - Math.pow(1 - phaseProgress, 3);
 
     const newDots = [...dotsRef.current];
@@ -519,6 +498,8 @@ export function EmbeddingSpace({
         }
         const easedX = fromX + (toX - fromX) * eased;
         const easedY = fromY + (toY - fromY) * eased;
+        // Jitter is keyed off the per-epoch step so it restarts in
+        // phase at each epoch boundary (matches the old behavior).
         const jx = JITTER_AMP * Math.sin(sStep * 0.04 + dot.jitterPhaseX);
         const jy = JITTER_AMP * Math.cos(sStep * 0.05 + dot.jitterPhaseY);
         dot.baseX = Math.max(0, Math.min(1, easedX + jx));
@@ -549,60 +530,52 @@ export function EmbeddingSpace({
 
     dotsRef.current = newDots;
     setDots(newDots);
-    setEpochStep({ epoch: epochRef.current, step: stepRef.current });
+    setEpochStep({ epoch: cycle.epoch, step: cycle.step });
   };
 
+  // Drive the embedding from the shared training cycle. Every cycle tick
+  // advances the dot physics by exactly one step. In paused/export mode
+  // the cycle's rawStep equals `stepFrame`, so the embedding's response
+  // stays a pure function of the slider position. Snapshots are recorded
+  // only in paused mode so backward scrubbing can restore exactly.
   useEffect(() => {
-    if (paused) return;
-    let animationFrameId: number;
-    let lastTime = performance.now();
-
-    const animate = (time: number) => {
-      const dt = time - lastTime;
-      lastTime = time;
-      stepPhysics(dt);
-      animationFrameId = requestAnimationFrame(animate);
-    };
-
-    animationFrameId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationFrameId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paused]);
-
-  // Paused: bidirectional frame stepping via snapshot history (state + PRNG).
-  useEffect(() => {
-    if (!paused) return;
+    if (dotsRef.current.length === 0 || !animPrngRef.current) return;
     const prng = animPrngRef.current;
-    if (!prng) return;
-
-    const delta = stepFrame - lastFrameRef.current;
+    const delta = cycleRawStep - lastRawStepRef.current;
     if (delta > 0) {
       for (let i = 0; i < delta; i++) {
-        historyRef.current.push({
-          dots: dotsRef.current.map(d => ({ ...d })),
-          step: stepRef.current,
-          epoch: epochRef.current,
-          nextSnapStep: nextSnapStepRef.current,
-          prngState: prng.getState(),
-        });
-        stepPhysics(16);
+        const prevRaw = lastRawStepRef.current + i;
+        const targetRaw = prevRaw + 1;
+        if (paused) {
+          // Snapshot the *displayed* cycle (per-epoch step + epoch) so
+          // backward scrub restores the canonical EPOCH/STEP header
+          // chip — including across epoch boundaries (e.g. 1259 → 0).
+          const prevCycle = computeCycle(prevRaw);
+          historyRef.current.push({
+            dots: dotsRef.current.map(d => ({ ...d })),
+            step: prevCycle.step,
+            epoch: prevCycle.epoch,
+            nextSnapStep: nextSnapStepRef.current,
+            prngState: prng.getState(),
+          });
+        }
+        stepPhysics(computeCycle(targetRaw));
       }
-    } else if (delta < 0) {
+    } else if (delta < 0 && paused) {
       let snap: FrameSnapshot | undefined;
       for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
       if (snap) {
         prng.setState(snap.prngState);
-        stepRef.current = snap.step;
-        epochRef.current = snap.epoch;
+        lastEpochRef.current = snap.epoch;
         nextSnapStepRef.current = snap.nextSnapStep;
         dotsRef.current = snap.dots.map(d => ({ ...d }));
         setDots(dotsRef.current);
         setEpochStep({ epoch: snap.epoch, step: snap.step });
       }
     }
-    lastFrameRef.current = stepFrame;
+    lastRawStepRef.current = cycleRawStep;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepFrame, paused]);
+  }, [cycleRawStep, paused]);
 
   // When entering paused/export mode, drop any in-flight trails so they
   // never participate in the deterministic frame stream. Trails are a

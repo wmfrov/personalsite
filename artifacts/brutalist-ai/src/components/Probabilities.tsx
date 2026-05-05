@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
 import { generateProbabilityLabel } from '../lib/tokens';
+import { CycleState, computeCycle, easeOutCubic } from '../lib/trainingCycle';
+import { useCycleStore } from '../contexts/TrainingCycleContext';
 
 interface ProbabilitiesProps {
   seedData: SeedData;
@@ -23,11 +25,44 @@ interface Snapshot {
 
 const NUM_BARS = 8;
 
+// Targets per phase. DISPERSE: roughly uniform with some noise (model
+// "forgot"). CONVERGE: spread by rank — top items climb, tail falls.
+// HOLD: sharpened with a clear top-1 / top-2 chosen deterministically
+// from the epoch number so each epoch settles on a different "answer".
+function targetsForPhase(cycle: CycleState, prng: SeededPrng): number[] {
+  const out: number[] = new Array(NUM_BARS);
+  const winner = cycle.epoch % NUM_BARS;
+  const runner = (cycle.epoch * 7 + 3) % NUM_BARS;
+
+  if (cycle.phase === 'disperse') {
+    for (let i = 0; i < NUM_BARS; i++) {
+      // Near-uniform around 1/N with a touch of noise.
+      out[i] = Math.max(0.02, Math.min(0.98, 1 / NUM_BARS + (prng() - 0.5) * 0.18));
+    }
+    return out;
+  }
+
+  // Rank-based shape, easing in over the converge phase, fully held in hold.
+  const e = cycle.phase === 'hold' ? 1 : easeOutCubic(cycle.phaseProgress);
+  for (let i = 0; i < NUM_BARS; i++) {
+    let base: number;
+    if (i === winner) base = 0.78;
+    else if (i === runner) base = 0.42;
+    else base = 0.06 + (prng() * 0.18);
+    // Lerp from a uniform-ish 1/N toward the shaped value.
+    const uniform = 1 / NUM_BARS;
+    out[i] = Math.max(0.02, Math.min(0.98, uniform + (base - uniform) * e));
+  }
+  return out;
+}
+
 export function Probabilities({ seedData, palette, paused = false, stepFrame = 0 }: ProbabilitiesProps) {
   const [bars, setBars] = useState<ProbBar[]>([]);
   const jitterPrngRef = useRef<SeededPrng | null>(null);
   const historyRef = useRef<Snapshot[]>([]);
   const lastFrameRef = useRef(0);
+
+  const cycleStore = useCycleStore();
 
   useEffect(() => {
     const initPrng = derivePrng(seedData, PanelSlot.ProbsInit);
@@ -35,7 +70,6 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
     historyRef.current = [];
     lastFrameRef.current = 0;
     const newBars: ProbBar[] = [];
-    // De-duped pool of inscrutable token-style labels.
     const labels = new Set<string>();
     let guard = 0;
     while (labels.size < NUM_BARS && guard < NUM_BARS * 8) {
@@ -51,31 +85,30 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
     setBars(newBars);
   }, [seedData]);
 
-  const tick = (current: ProbBar[], prng: SeededPrng): ProbBar[] => {
+  const tick = (current: ProbBar[], cycle: CycleState, prng: SeededPrng): ProbBar[] => {
     if (current.length === 0) return current;
-    const next = [...current];
-    const numJitter = prng() > 0.5 ? 2 : 1;
-    for (let i = 0; i < numJitter; i++) {
-      const idx = Math.floor(prng() * next.length);
-      next[idx] = { ...next[idx], target: prng() };
-    }
-    return next;
+    const targets = targetsForPhase(cycle, prng);
+    return current.map((b, i) => ({ ...b, target: targets[i] }));
   };
 
-  // Seeded phase offset prevents lockstep ticking with the other panels.
+  // Live: phase-offset interval reads the shared cycle each tick.
   useEffect(() => {
     if (paused || bars.length === 0) return;
     const prng = jitterPrngRef.current!;
     const phaseOffset = Math.floor(seedData.panelSeeds[PanelSlot.ProbsJitter] % 450);
     let cleanup: () => void = () => {};
     const start = setTimeout(() => {
-      const interval = setInterval(() => setBars(prev => tick(prev, prng)), 500);
+      const interval = setInterval(() => {
+        const cycle = cycleStore.get();
+        setBars(prev => tick(prev, cycle, prng));
+      }, 500);
       cleanup = () => clearInterval(interval);
     }, phaseOffset);
     return () => {
       clearTimeout(start);
       cleanup();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedData, bars.length, paused]);
 
   useEffect(() => {
@@ -87,7 +120,8 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
         let next = prev;
         for (let i = 0; i < delta; i++) {
           historyRef.current.push({ bars: next, prngState: prng.getState() });
-          next = tick(next, prng);
+          const cycle = computeCycle(lastFrameRef.current + i + 1);
+          next = tick(next, cycle, prng);
         }
         return next;
       });
@@ -103,8 +137,6 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepFrame, paused]);
 
-  // Rank bars by current target value to assign podium colors.
-  // Top-3 get accent1/accent2/accent3 (1st/2nd/3rd); the rest stay ink.
   const rankByTarget = [...bars]
     .map((b, i) => ({ i, t: b.target }))
     .sort((a, b) => b.t - a.t);
@@ -160,8 +192,6 @@ function renderBar(value: number, color: string, palette: Palette) {
   );
 }
 
-// Approximate log-odds of the displayed probability. Clamped so very
-// small / very large targets don't blow up to ±Infinity.
 function formatLogit(p: number): string {
   const clamped = Math.max(0.001, Math.min(0.999, p));
   const l = Math.log(clamped / (1 - clamped));

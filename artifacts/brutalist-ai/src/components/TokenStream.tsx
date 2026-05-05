@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
 import { generateMixedToken } from '../lib/tokens';
+import { computeCycle } from '../lib/trainingCycle';
+import { useCycleStore } from '../contexts/TrainingCycleContext';
 
 interface TokenStreamProps {
   seedData: SeedData;
@@ -13,22 +15,20 @@ interface TokenStreamProps {
 interface Snapshot {
   tokens: string[];
   idx: number;
-  /** Capture the visible-token cap at snapshot time so paused replay
-   * stays bit-identical even if the container is resized between
-   * stepping operations. */
+  lastEpoch: number;
   maxTokens: number;
 }
 
-// Conservative average pixel cost per rendered token (incl. trailing
-// space). Used to size the visible-token cap from the container.
 const AVG_TOKEN_PX = 48;
-// Tailwind text-sm × leading-relaxed.
 const LINE_HEIGHT_PX = 22;
 const MIN_VISIBLE = 60;
 const MAX_VISIBLE = 800;
-// Generation buffer is large so the stream doesn't visibly loop within
-// a normal session.
 const GEN_BUFFER = 800;
+
+// Marker prefix used to detect / render the epoch-boundary divider
+// alongside normal tokens. Must NOT collide with any token shape coming
+// out of `generateMixedToken`.
+const EPOCH_DIVIDER_PREFIX = '⟦EPOCH:';
 
 export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }: TokenStreamProps) {
   const [visibleTokens, setVisibleTokens] = useState<string[]>([]);
@@ -36,10 +36,13 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
   const tokensRef = useRef<string[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const idxRef = useRef(0);
+  const lastEpochRef = useRef(0);
   const visibleRef = useRef<string[]>([]);
   const historyRef = useRef<Snapshot[]>([]);
   const lastFrameRef = useRef(0);
   const maxTokensRef = useRef<number>(MIN_VISIBLE);
+
+  const cycleStore = useCycleStore();
 
   useEffect(() => {
     maxTokensRef.current = maxTokens;
@@ -55,12 +58,11 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
     setVisibleTokens([]);
     visibleRef.current = [];
     idxRef.current = 0;
+    lastEpochRef.current = 0;
     historyRef.current = [];
     lastFrameRef.current = 0;
   }, [seedData]);
 
-  // Size the visible-token cap from the actual container size so the box
-  // fills its space on a wide viewport instead of stopping at 60.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -78,11 +80,19 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
     return () => ro.disconnect();
   }, []);
 
-  const tickOnce = () => {
+  // One advance of the token stream. If the cycle's epoch advanced since
+  // the last tick, prepend an epoch-boundary marker before the regular
+  // token so the user can see "training restarted" in the stream.
+  const tickOnce = (epoch: number) => {
     const tokens = tokensRef.current;
     if (tokens.length === 0) return;
-    const next = [...visibleRef.current, tokens[idxRef.current]];
     const cap = maxTokensRef.current;
+    let next = visibleRef.current.slice();
+    if (epoch !== lastEpochRef.current) {
+      next.push(`${EPOCH_DIVIDER_PREFIX}${epoch}⟧`);
+      lastEpochRef.current = epoch;
+    }
+    next.push(tokens[idxRef.current]);
     while (next.length > cap) next.shift();
     visibleRef.current = next;
     setVisibleTokens(next);
@@ -95,7 +105,7 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
 
   useEffect(() => {
     if (paused || tokensRef.current.length === 0) return;
-    const interval = setInterval(tickOnce, 120);
+    const interval = setInterval(() => tickOnce(cycleStore.get().epoch), 120);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedData, paused]);
@@ -108,9 +118,11 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
         historyRef.current.push({
           tokens: [...visibleRef.current],
           idx: idxRef.current,
+          lastEpoch: lastEpochRef.current,
           maxTokens: maxTokensRef.current,
         });
-        tickOnce();
+        const epoch = computeCycle(lastFrameRef.current + i + 1).epoch;
+        tickOnce(epoch);
       }
     } else if (delta < 0) {
       let snap: Snapshot | undefined;
@@ -118,6 +130,7 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
       if (snap) {
         visibleRef.current = snap.tokens;
         idxRef.current = snap.idx;
+        lastEpochRef.current = snap.lastEpoch;
         maxTokensRef.current = snap.maxTokens;
         setMaxTokens(snap.maxTokens);
         setVisibleTokens(snap.tokens);
@@ -127,13 +140,21 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepFrame, paused]);
 
-  // Render each token in palette-driven color based on its marker class.
   const renderToken = (tok: string, i: number) => {
-    let color = palette.bg; // default = readable on dark bg
-    if (tok.startsWith('▁')) color = palette.accent3;        // word-piece start
-    else if (tok.startsWith('##')) color = palette.accent1;  // subword
-    else if (tok.startsWith('<') && tok.endsWith('>')) color = palette.accent2; // special
-    else if (tok.startsWith('t_') || tok.startsWith('tok_')) color = palette.accent2; // tok ID
+    if (tok.startsWith(EPOCH_DIVIDER_PREFIX)) {
+      // Pull the epoch number out of the marker for the rendered divider.
+      const n = tok.slice(EPOCH_DIVIDER_PREFIX.length, -1);
+      return (
+        <span key={i} style={{ color: palette.accent3, display: 'block', opacity: 0.85 }}>
+          {`─── epoch ${n} ───`}
+        </span>
+      );
+    }
+    let color = palette.bg;
+    if (tok.startsWith('▁')) color = palette.accent3;
+    else if (tok.startsWith('##')) color = palette.accent1;
+    else if (tok.startsWith('<') && tok.endsWith('>')) color = palette.accent2;
+    else if (tok.startsWith('t_') || tok.startsWith('tok_')) color = palette.accent2;
 
     return (
       <span key={i} style={{ color }}>

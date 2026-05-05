@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
+import { CycleState, computeCycle, Phase } from '../lib/trainingCycle';
+import { useCycleStore } from '../contexts/TrainingCycleContext';
 
 interface WeightsProps {
   seedData: SeedData;
@@ -23,14 +25,21 @@ interface Snapshot {
   flickerIdx: number;
 }
 
-// Pre-compute a fixed pool of rows so flicker indices stay deterministic
-// regardless of how many we end up rendering at a given viewport size.
 const MAX_ROWS = 32;
 const MIN_ROWS = 12;
 const SPARK_LEN = 12;
-// Approximate per-row pixel height (chip + sparkline gap); used to decide
-// how many rows fit in the current container.
 const ROW_HEIGHT_PX = 22;
+
+// How many rows flicker in a given tick, by training phase. DISPERSE +
+// CONVERGE feel like an active "learning" model; HOLD reads as settled —
+// most ticks are no-ops, with the occasional slow drift.
+function flickerCountForPhase(phase: Phase, prng: SeededPrng): number {
+  const r = prng(); // always consumed so PRNG state is phase-independent
+  if (phase === 'disperse') return 2;
+  if (phase === 'converge') return 1;
+  // hold: ~25% of ticks fire one flicker
+  return r < 0.25 ? 1 : 0;
+}
 
 export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: WeightsProps) {
   const [rows, setRows] = useState<WeightRow[]>([]);
@@ -40,6 +49,8 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
   const historyRef = useRef<Snapshot[]>([]);
   const lastFrameRef = useRef(0);
   const bodyRef = useRef<HTMLDivElement>(null);
+
+  const cycleStore = useCycleStore();
 
   useEffect(() => {
     const initPrng = derivePrng(seedData, PanelSlot.WeightsInit);
@@ -55,9 +66,6 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
     setFlickerIdx(-1);
   }, [seedData]);
 
-  // Resize observer — recompute how many rows fit in the body. Snapshots
-  // record the full MAX_ROWS array, so changing visibleCount across renders
-  // never invalidates history.
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
@@ -72,18 +80,31 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
     return () => ro.disconnect();
   }, []);
 
-  const tick = (current: WeightRow[], prng: SeededPrng): { rows: WeightRow[]; flickerIdx: number } => {
+  const tick = (
+    current: WeightRow[],
+    cycle: CycleState,
+    prng: SeededPrng,
+  ): { rows: WeightRow[]; flickerIdx: number } => {
     if (current.length === 0) return { rows: current, flickerIdx: -1 };
+    const count = flickerCountForPhase(cycle.phase, prng);
+    if (count === 0) return { rows: current, flickerIdx: -1 };
     const next = current.slice();
-    const idx = Math.floor(prng() * next.length);
-    const v = randomWeight(prng);
-    const prevSpark = next[idx].spark;
-    const spark = prevSpark.length >= SPARK_LEN ? [...prevSpark.slice(1), v] : [...prevSpark, v];
-    next[idx] = { val: v, formatted: formatWeight(v), spark };
-    return { rows: next, flickerIdx: idx };
+    let lastIdx = -1;
+    for (let k = 0; k < count; k++) {
+      const idx = Math.floor(prng() * next.length);
+      const v = randomWeight(prng);
+      const prevSpark = next[idx].spark;
+      const spark =
+        prevSpark.length >= SPARK_LEN ? [...prevSpark.slice(1), v] : [...prevSpark, v];
+      next[idx] = { val: v, formatted: formatWeight(v), spark };
+      lastIdx = idx;
+    }
+    return { rows: next, flickerIdx: lastIdx };
   };
 
   // Live: timer-driven flicker, seeded phase offset to break sync.
+  // Each fire reads the current shared cycle so flicker activity tracks
+  // the dashboard-wide training arc.
   useEffect(() => {
     if (paused || rows.length === 0) return;
     const prng = flickerPrngRef.current!;
@@ -91,8 +112,9 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
     let cleanup: () => void = () => {};
     const start = setTimeout(() => {
       const interval = setInterval(() => {
+        const cycle = cycleStore.get();
         setRows(prev => {
-          const r = tick(prev, prng);
+          const r = tick(prev, cycle, prng);
           setFlickerIdx(r.flickerIdx);
           return r.rows;
         });
@@ -103,9 +125,12 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
       clearTimeout(start);
       cleanup();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedData, paused, rows.length]);
 
-  // Paused: bidirectional frame stepping via snapshot history.
+  // Paused: bidirectional frame stepping via snapshot history. Each tick
+  // reads the cycle for that exact frame so the panel stays a pure
+  // function of stepFrame end-to-end.
   useEffect(() => {
     if (!paused || rows.length === 0 || !flickerPrngRef.current) return;
     const prng = flickerPrngRef.current;
@@ -116,7 +141,8 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
         let lastIdx = flickerIdx;
         for (let i = 0; i < delta; i++) {
           historyRef.current.push({ rows: next, prngState: prng.getState(), flickerIdx: lastIdx });
-          const r = tick(next, prng);
+          const cycle = computeCycle(lastFrameRef.current + i + 1);
+          const r = tick(next, cycle, prng);
           next = r.rows;
           lastIdx = r.flickerIdx;
         }
@@ -180,13 +206,9 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
 }
 
 function Sparkline({ values, color, accent }: { values: number[]; color: string; accent: string }) {
-  // Map raw weight in roughly [-1, 1] to bar height in [0, 1]. Scientific
-  // weights with magnitudes below ~0.01 just show as flat low bars, which
-  // is the desired "this row is currently small" reading.
   const W = 50;
   const H = 12;
   const n = SPARK_LEN;
-  // Right-align the sparkline so newer points sit next to the value column.
   const startX = n - values.length;
   const bars = values.map((v, i) => {
     const m = Math.min(1, Math.abs(v));
@@ -215,7 +237,6 @@ function Sparkline({ values, color, accent }: { values: number[]; color: string;
 }
 
 function randomWeight(prng: SeededPrng): number {
-  // ~20% are scientific-small; rest live in roughly [-1, 1].
   const r = prng();
   if (r < 0.2) {
     const sign = prng() > 0.5 ? 1 : -1;
@@ -231,7 +252,6 @@ function formatWeight(v: number): string {
   const sign = v >= 0 ? '+' : '-';
   const a = Math.abs(v);
   if (a < 0.01) {
-    // Scientific: keep the same `±X.XXe-N` shape as the previous version.
     const exp = Math.floor(-Math.log10(a));
     const mant = a * Math.pow(10, exp);
     return `${sign}${mant.toFixed(2)}e-${exp}`;

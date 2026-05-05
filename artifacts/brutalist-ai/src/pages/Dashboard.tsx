@@ -9,6 +9,7 @@ import { Probabilities } from '../components/Probabilities';
 import { ExportModal } from '../components/ExportModal';
 import { parseSeed, SeedData } from '../lib/hash';
 import { applyPaletteVars, DEFAULT_PALETTE_ID, getPalette, PALETTES, pickAccent } from '../lib/palettes';
+import { TrainingCycleProvider } from '../contexts/TrainingCycleContext';
 
 interface ExportState {
   active: boolean;
@@ -426,37 +427,43 @@ export default function Dashboard() {
             );
           })()}
 
-          <div className="w-full h-full flex flex-col md:flex-row gap-4">
-            <div className="flex-[2] md:w-[65%] min-w-0 h-1/2 md:h-full">
-              <EmbeddingSpace
-                key={`emb-${resetKey}`}
-                seedData={seedData}
-                palette={palette}
-                accent={accent}
-                paused={paused}
-                stepFrame={stepFrame}
-              />
-            </div>
+          <TrainingCycleProvider
+            paused={paused}
+            stepFrame={stepFrame}
+            resetKey={`${seedData.hash}|${resetKey}`}
+          >
+            <div className="w-full h-full flex flex-col md:flex-row gap-4">
+              <div className="flex-[2] md:w-[65%] min-w-0 h-1/2 md:h-full">
+                <EmbeddingSpace
+                  key={`emb-${resetKey}`}
+                  seedData={seedData}
+                  palette={palette}
+                  accent={accent}
+                  paused={paused}
+                  stepFrame={stepFrame}
+                />
+              </div>
 
-            <div className="flex-1 md:w-[35%] flex flex-col gap-4 min-w-0 h-1/2 md:h-full">
-              <div className="flex-1 flex gap-4 min-h-0">
-                <div className="flex-1">
-                  <Weights key={`w-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+              <div className="flex-1 md:w-[35%] flex flex-col gap-4 min-w-0 h-1/2 md:h-full">
+                <div className="flex-1 flex gap-4 min-h-0">
+                  <div className="flex-1">
+                    <Weights key={`w-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+                  </div>
+                  <div className="flex-[1.5]">
+                    <TokenStream key={`t-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+                  </div>
                 </div>
-                <div className="flex-[1.5]">
-                  <TokenStream key={`t-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+
+                <div className="flex-[0.8] min-h-0">
+                  <Loss key={`l-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+                </div>
+
+                <div className="flex-1 min-h-0">
+                  <Probabilities key={`p-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
                 </div>
               </div>
-
-              <div className="flex-[0.8] min-h-0">
-                <Loss key={`l-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
-              </div>
-
-              <div className="flex-1 min-h-0">
-                <Probabilities key={`p-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
-              </div>
             </div>
-          </div>
+          </TrainingCycleProvider>
 
         </div>
       </div>
