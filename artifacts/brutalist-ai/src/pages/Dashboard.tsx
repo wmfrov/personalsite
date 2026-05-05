@@ -145,13 +145,13 @@ export default function Dashboard() {
     }
   };
 
-  if (!seedData) return null;
-
-  const paused = exportState.active;
-
   // Recompute export-preview scale on viewport resize so the frozen banner
-  // doesn't overflow / stay tiny when the user resizes the window.
-  const [viewport, setViewport] = useState({ w: typeof window !== 'undefined' ? window.innerWidth : 1280, h: typeof window !== 'undefined' ? window.innerHeight : 720 });
+  // doesn't overflow / stay tiny when the user resizes the window. Declared
+  // above any early return to keep hook order invariant across renders.
+  const [viewport, setViewport] = useState({
+    w: typeof window !== 'undefined' ? window.innerWidth : 1280,
+    h: typeof window !== 'undefined' ? window.innerHeight : 720,
+  });
   useEffect(() => {
     if (!exportState.active) return;
     const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
@@ -159,6 +159,10 @@ export default function Dashboard() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [exportState.active]);
+
+  if (!seedData) return null;
+
+  const paused = exportState.active;
 
   return (
     <div className="min-h-screen bg-cream flex flex-col font-mono relative overflow-hidden">
