@@ -17,7 +17,7 @@ export function ExportModal({ isOpen, onClose, onPresetSelect }: ExportModalProp
   const wValid = Number.isFinite(parsedW) && parsedW >= MIN_DIM && parsedW <= MAX_DIM;
   const hValid = Number.isFinite(parsedH) && parsedH >= MIN_DIM && parsedH <= MAX_DIM;
   const customValid = wValid && hValid;
-  
+
   // Handle ESC
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -32,26 +32,44 @@ export function ExportModal({ isOpen, onClose, onPresetSelect }: ExportModalProp
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/70">
-      <div className="brutalist-panel max-w-md w-full bg-cream animate-in fade-in zoom-in duration-100" style={{ borderRadius: 0 }}>
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center"
+      style={{ background: 'rgba(10,10,10,0.7)' }}
+    >
+      <div className="brutalist-panel max-w-md w-full">
         <div className="brutalist-label flex justify-between">
           <span>EXPORT BANNER</span>
-          <button onClick={onClose} className="hover:text-ph-red cursor-pointer px-1">X</button>
+          <button
+            onClick={onClose}
+            className="cursor-pointer px-1"
+            style={{ color: 'var(--bg)' }}
+          >
+            X
+          </button>
         </div>
-        
+
         <div className="p-6 flex flex-col gap-6">
           <div className="flex flex-col gap-2">
-            <h3 className="font-bold text-sm border-b-[3px] border-ink pb-1 mb-2">PRESETS</h3>
-            
-            <button 
+            <h3
+              className="font-bold text-sm pb-1 mb-2"
+              style={{ borderBottom: '3px solid var(--ink)' }}
+            >
+              PRESETS
+            </h3>
+
+            <button
               onClick={() => onPresetSelect(1584, 396)}
-              className="brutalist-button w-full flex justify-between items-center bg-ph-blue text-cream border-ink"
+              className="brutalist-button w-full flex justify-between items-center"
+              style={{
+                background: 'var(--accent2)',
+                color: 'var(--bg)',
+              }}
             >
               <span>LINKEDIN COVER</span>
               <span className="text-xs font-normal">1584 × 396</span>
             </button>
-            
-            <button 
+
+            <button
               onClick={() => onPresetSelect(1500, 500)}
               className="brutalist-button w-full flex justify-between items-center"
             >
@@ -59,32 +77,45 @@ export function ExportModal({ isOpen, onClose, onPresetSelect }: ExportModalProp
               <span className="text-xs font-normal">1500 × 500</span>
             </button>
           </div>
-          
+
           <div className="flex flex-col gap-2">
-            <h3 className="font-bold text-sm border-b-[3px] border-ink pb-1 mb-2">CUSTOM</h3>
-            
+            <h3
+              className="font-bold text-sm pb-1 mb-2"
+              style={{ borderBottom: '3px solid var(--ink)' }}
+            >
+              CUSTOM
+            </h3>
+
             <div className="flex gap-4 items-end">
               <div className="flex flex-col flex-1 gap-1">
                 <label className="text-xs font-bold">WIDTH</label>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   value={customW}
                   onChange={e => setCustomW(e.target.value)}
-                  className="border-[3px] border-ink px-3 py-2 focus:outline-none focus:bg-ph-yellow focus:text-ink font-mono"
-                  style={{ borderRadius: 0 }}
+                  className="px-3 py-2 focus:outline-none font-mono"
+                  style={{
+                    border: '3px solid var(--ink)',
+                    background: 'var(--bg)',
+                    color: 'var(--ink)',
+                  }}
                 />
               </div>
               <div className="flex flex-col flex-1 gap-1">
                 <label className="text-xs font-bold">HEIGHT</label>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   value={customH}
                   onChange={e => setCustomH(e.target.value)}
-                  className="border-[3px] border-ink px-3 py-2 focus:outline-none focus:bg-ph-yellow focus:text-ink font-mono"
-                  style={{ borderRadius: 0 }}
+                  className="px-3 py-2 focus:outline-none font-mono"
+                  style={{
+                    border: '3px solid var(--ink)',
+                    background: 'var(--bg)',
+                    color: 'var(--ink)',
+                  }}
                 />
               </div>
-              <button 
+              <button
                 onClick={() => customValid && onPresetSelect(parsedW, parsedH)}
                 disabled={!customValid}
                 className="brutalist-button shrink-0 h-[46px] disabled:opacity-40 disabled:cursor-not-allowed"
@@ -93,13 +124,19 @@ export function ExportModal({ isOpen, onClose, onPresetSelect }: ExportModalProp
               </button>
             </div>
             {!customValid && (customW !== '' || customH !== '') && (
-              <p className="text-xs text-ph-red font-mono mt-1 font-bold">
+              <p
+                className="text-xs font-mono mt-1 font-bold"
+                style={{ color: 'var(--accent1)' }}
+              >
                 ! width &amp; height must be {MIN_DIM}–{MAX_DIM} px
               </p>
             )}
           </div>
 
-          <p className="text-xs text-ink/70 font-mono mt-4 leading-tight">
+          <p
+            className="text-xs font-mono mt-4 leading-tight"
+            style={{ color: 'var(--ink)', opacity: 0.7 }}
+          >
             Selecting a preset will freeze the dashboard and resize it to exact pixel dimensions. Use arrow keys to find the perfect frame.
           </p>
         </div>

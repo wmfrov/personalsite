@@ -8,6 +8,7 @@ import { Loss } from '../components/Loss';
 import { Probabilities } from '../components/Probabilities';
 import { ExportModal } from '../components/ExportModal';
 import { parseSeed, SeedData } from '../lib/hash';
+import { applyPaletteVars, DEFAULT_PALETTE_ID, getPalette, PALETTES, pickAccent } from '../lib/palettes';
 
 interface ExportState {
   active: boolean;
@@ -15,9 +16,46 @@ interface ExportState {
   h: number;
 }
 
+/**
+ * URL hash format: `#<encoded-seed>|<paletteId>`. Backward-compatible — if no
+ * `|` is present (old links) the whole hash is treated as the seed and the
+ * default palette is used. Encoded seeds never contain a literal `|` because
+ * encodeURIComponent escapes it, so splitting on the LAST `|` is unambiguous.
+ */
+function parseHash(raw: string): { seed: string | null; paletteId: string } {
+  if (!raw) return { seed: null, paletteId: DEFAULT_PALETTE_ID };
+  // Always split on the LAST literal `|`. Encoded seeds never contain a raw
+  // pipe (encodeURIComponent escapes it), so this split is unambiguous. A
+  // missing pipe = legacy single-segment hash → whole string is the seed.
+  const lastPipe = raw.lastIndexOf('|');
+  let seedPart: string;
+  let paletteId = DEFAULT_PALETTE_ID;
+  if (lastPipe >= 0) {
+    seedPart = raw.slice(0, lastPipe);
+    const candidate = raw.slice(lastPipe + 1);
+    if (PALETTES.some(p => p.id === candidate)) {
+      paletteId = candidate;
+    }
+    // else: unknown palette id → keep default; the seed is still the left part
+    // so we don't pollute it with the bad suffix.
+  } else {
+    seedPart = raw;
+  }
+  let seed: string;
+  try {
+    seed = decodeURIComponent(seedPart);
+  } catch {
+    seed = seedPart;
+  }
+  return { seed, paletteId };
+}
+
 export default function Dashboard() {
   const [seed, setSeed] = useState('hello world');
   const [seedData, setSeedData] = useState<SeedData | null>(null);
+  const [paletteId, setPaletteId] = useState<string>(DEFAULT_PALETTE_ID);
+
+  const palette = getPalette(paletteId);
 
   const [hideChrome, setHideChrome] = useState(false);
   const [exportState, setExportState] = useState<ExportState>({ active: false, w: 0, h: 0 });
@@ -30,16 +68,19 @@ export default function Dashboard() {
 
   const dashboardRef = useRef<HTMLDivElement>(null);
 
-  // Restore seed from URL hash; tolerate malformed %XX sequences.
+  // Restore seed + palette from URL hash; tolerate malformed %XX sequences.
   useEffect(() => {
     const raw = window.location.hash.slice(1);
-    if (!raw) return;
-    try {
-      setSeed(decodeURIComponent(raw));
-    } catch {
-      setSeed(raw);
-    }
+    const parsed = parseHash(raw);
+    if (parsed.seed !== null) setSeed(parsed.seed);
+    setPaletteId(parsed.paletteId);
   }, []);
+
+  // Apply palette as CSS custom properties on the documentElement so it
+  // cascades to portals (modal, picker popover) too.
+  useEffect(() => {
+    applyPaletteVars(document.documentElement, palette);
+  }, [palette]);
 
   // Rehash on commit (Enter/blur). Guard against stale async digests.
   useEffect(() => {
@@ -47,12 +88,12 @@ export default function Dashboard() {
     parseSeed(seed).then(data => {
       if (cancelled) return;
       setSeedData(data);
-      window.location.hash = encodeURIComponent(seed);
+      window.location.hash = `${encodeURIComponent(seed)}|${paletteId}`;
     });
     return () => {
       cancelled = true;
     };
-  }, [seed]);
+  }, [seed, paletteId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -125,7 +166,7 @@ export default function Dashboard() {
       });
 
       const link = document.createElement('a');
-      link.download = `brutalist-banner-${seedData?.hash?.substring(0, 8) || 'export'}.png`;
+      link.download = `brutalist-banner-${seedData?.hash?.substring(0, 8) || 'export'}-${paletteId}.png`;
       link.href = dataUrl;
       link.click();
     } catch (err) {
@@ -151,9 +192,13 @@ export default function Dashboard() {
   if (!seedData) return null;
 
   const paused = exportState.active;
+  const accent = pickAccent(palette, seedData.accentIndex);
 
   return (
-    <div className="min-h-screen bg-cream flex flex-col font-mono relative overflow-hidden">
+    <div
+      className="min-h-screen flex flex-col font-mono relative overflow-hidden"
+      style={{ background: 'var(--bg)', color: 'var(--ink)' }}
+    >
       <div
         className={`transition-opacity duration-200 ${(!hideChrome && !exportState.active) ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 overflow-hidden'}`}
       >
@@ -161,6 +206,8 @@ export default function Dashboard() {
           seed={seed}
           setSeed={setSeed}
           seedData={seedData}
+          palette={palette}
+          setPalette={setPaletteId}
           onExport={() => setIsModalOpen(true)}
         />
       </div>
@@ -171,34 +218,49 @@ export default function Dashboard() {
         onPresetSelect={handleExportPreset}
       />
 
-      <div className={`flex-1 ${exportState.active ? 'flex items-center justify-center bg-ink/90 overflow-auto p-8' : ''}`}>
+      <div
+        className={`flex-1 ${exportState.active ? 'flex items-center justify-center overflow-auto p-8' : ''}`}
+        style={exportState.active ? { background: 'rgba(10,10,10,0.92)' } : undefined}
+      >
         <div
           ref={dashboardRef}
-          className={`bg-cream relative ${exportState.active ? 'shrink-0' : 'h-[calc(100vh-56px)] w-full p-4'}`}
+          className={`relative ${exportState.active ? 'shrink-0' : 'h-[calc(100vh-56px)] w-full p-4'}`}
           style={
             exportState.active
               ? {
+                  background: 'var(--bg)',
                   width: exportState.w,
                   height: exportState.h,
                   transform: `scale(min(1, ${(viewport.w - 64) / exportState.w}, ${(viewport.h - 120) / exportState.h}))`,
                   transformOrigin: 'center center',
                 }
-              : {}
+              : { background: 'var(--bg)' }
           }
         >
           {exportState.active && (
             <div
               id="export-instruction-bar"
-              className="absolute -top-12 left-0 right-0 flex items-center justify-between bg-ph-yellow border-[3px] border-ink px-4 py-2 font-bold z-50 text-ink shadow-[4px_4px_0_0_#000]"
-              style={{ transform: 'none', borderRadius: 0 }}
+              className="absolute -top-12 left-0 right-0 flex items-center justify-between px-4 py-2 font-bold z-50"
+              style={{
+                background: palette.accent3,
+                color: palette.ink,
+                border: `3px solid ${palette.ink}`,
+                boxShadow: `4px 4px 0 0 ${palette.ink}`,
+                transform: 'none',
+              }}
             >
-              <span>Exporting: {exportState.w} × {exportState.h} · frame {stepFrame}</span>
+              <span>Exporting: {exportState.w} × {exportState.h} · frame {stepFrame} · palette {palette.name}</span>
               <div className="flex items-center gap-3">
                 <span className="text-xs">← Step Back | → Step Forward | ESC Exit</span>
                 <button
                   onClick={downloadImage}
-                  className="bg-ink text-cream px-3 py-1 text-sm font-bold border-[3px] border-ink shadow-[4px_4px_0_0_#000] hover:bg-ph-red hover:text-cream transition-colors duration-0"
-                  style={{ borderRadius: 0 }}
+                  className="px-3 py-1 text-sm font-bold cursor-pointer"
+                  style={{
+                    background: palette.ink,
+                    color: palette.bg,
+                    border: `3px solid ${palette.ink}`,
+                    boxShadow: `4px 4px 0 0 ${palette.ink}`,
+                  }}
                 >
                   ↓ DOWNLOAD PNG
                 </button>
@@ -207,32 +269,46 @@ export default function Dashboard() {
           )}
 
           {exportState.active && (
-            <div className="absolute top-4 left-4 z-50 bg-ink text-cream px-2 py-1 text-xs font-bold font-mono border-b-[3px] border-ink">
-              SEED:{seedData.hash.substring(0, 8)}
+            <div
+              className="absolute top-4 left-4 z-50 px-2 py-1 text-xs font-bold font-mono"
+              style={{
+                background: palette.ink,
+                color: palette.bg,
+                borderBottom: `3px solid ${palette.ink}`,
+              }}
+            >
+              SEED:{seedData.hash.substring(0, 8)} · {palette.name}
             </div>
           )}
 
           <div className="w-full h-full flex flex-col md:flex-row gap-4">
             <div className="flex-[2] md:w-[65%] min-w-0 h-1/2 md:h-full">
-              <EmbeddingSpace key={`emb-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
+              <EmbeddingSpace
+                key={`emb-${resetKey}`}
+                seedData={seedData}
+                palette={palette}
+                accent={accent}
+                paused={paused}
+                stepFrame={stepFrame}
+              />
             </div>
 
             <div className="flex-1 md:w-[35%] flex flex-col gap-4 min-w-0 h-1/2 md:h-full">
               <div className="flex-1 flex gap-4 min-h-0">
                 <div className="flex-1">
-                  <Weights key={`w-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
+                  <Weights key={`w-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
                 </div>
                 <div className="flex-[1.5]">
-                  <TokenStream key={`t-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
+                  <TokenStream key={`t-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
                 </div>
               </div>
 
               <div className="flex-[0.8] min-h-0">
-                <Loss key={`l-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
+                <Loss key={`l-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
               </div>
 
               <div className="flex-1 min-h-0">
-                <Probabilities key={`p-${resetKey}`} seedData={seedData} paused={paused} stepFrame={stepFrame} />
+                <Probabilities key={`p-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
               </div>
             </div>
           </div>

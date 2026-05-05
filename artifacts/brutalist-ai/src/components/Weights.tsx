@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
+import { Palette } from '../lib/palettes';
 
 interface WeightsProps {
   seedData: SeedData;
+  palette: Palette;
   paused?: boolean;
   /** Current target frame. Each ±1 step advances or rewinds one tick. */
   stepFrame?: number;
@@ -11,10 +13,12 @@ interface WeightsProps {
 interface Snapshot {
   weights: string[];
   prngState: number;
+  flickerIdx: number;
 }
 
-export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProps) {
+export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: WeightsProps) {
   const [weights, setWeights] = useState<string[]>([]);
+  const [flickerIdx, setFlickerIdx] = useState<number>(-1);
   const flickerPrngRef = useRef<SeededPrng | null>(null);
   const historyRef = useRef<Snapshot[]>([]);
   const lastFrameRef = useRef(0);
@@ -27,14 +31,15 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
     const initialWeights: string[] = [];
     for (let i = 0; i < 12; i++) initialWeights.push(formatWeight(initPrng));
     setWeights(initialWeights);
+    setFlickerIdx(-1);
   }, [seedData]);
 
-  const tick = (current: string[], prng: SeededPrng): string[] => {
-    if (current.length === 0) return current;
+  const tick = (current: string[], prng: SeededPrng): { weights: string[]; flickerIdx: number } => {
+    if (current.length === 0) return { weights: current, flickerIdx: -1 };
     const next = [...current];
     const idx = Math.floor(prng() * next.length);
     next[idx] = formatWeight(prng);
-    return next;
+    return { weights: next, flickerIdx: idx };
   };
 
   // Live: timer-driven flicker, seeded phase offset to break sync.
@@ -43,9 +48,17 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
     const prng = flickerPrngRef.current!;
     const phaseOffset = Math.floor((seedData.panelSeeds[PanelSlot.WeightsFlicker] % 350));
     const start = setTimeout(() => {
-      setWeights(prev => tick(prev, prng));
+      setWeights(prev => {
+        const r = tick(prev, prng);
+        setFlickerIdx(r.flickerIdx);
+        return r.weights;
+      });
       const interval = setInterval(() => {
-        setWeights(prev => tick(prev, prng));
+        setWeights(prev => {
+          const r = tick(prev, prng);
+          setFlickerIdx(r.flickerIdx);
+          return r.weights;
+        });
       }, 400);
       cleanup = () => clearInterval(interval);
     }, phaseOffset);
@@ -64,10 +77,14 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
     if (delta > 0) {
       setWeights(prev => {
         let next = prev;
+        let lastIdx = flickerIdx;
         for (let i = 0; i < delta; i++) {
-          historyRef.current.push({ weights: next, prngState: prng.getState() });
-          next = tick(next, prng);
+          historyRef.current.push({ weights: next, prngState: prng.getState(), flickerIdx: lastIdx });
+          const r = tick(next, prng);
+          next = r.weights;
+          lastIdx = r.flickerIdx;
         }
+        setFlickerIdx(lastIdx);
         return next;
       });
     } else if (delta < 0) {
@@ -76,6 +93,7 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
       if (snap) {
         prng.setState(snap.prngState);
         setWeights(snap.weights);
+        setFlickerIdx(snap.flickerIdx);
       }
     }
     lastFrameRef.current = stepFrame;
@@ -85,13 +103,36 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
   return (
     <div className="brutalist-panel h-full flex flex-col min-h-0">
       <div className="brutalist-label shrink-0">WEIGHTS</div>
-      <div className="p-4 flex-1 flex flex-col justify-between font-mono text-sm overflow-hidden bg-cream">
-        {weights.map((w, i) => (
-          <div key={i} className="flex justify-between items-center py-1">
-            <span className="text-ink/50">W_{i.toString().padStart(2, '0')}</span>
-            <span className="font-bold">{w}</span>
-          </div>
-        ))}
+      <div
+        className="p-4 flex-1 flex flex-col justify-between font-mono text-sm overflow-hidden"
+        style={{ background: palette.bg }}
+      >
+        {weights.map((w, i) => {
+          const isFlicker = i === flickerIdx;
+          return (
+            <div key={i} className="flex justify-between items-center py-1">
+              <span
+                className="px-1 font-bold"
+                style={{
+                  background: palette.accent1,
+                  color: palette.bg,
+                }}
+              >
+                W_{i.toString().padStart(2, '0')}
+              </span>
+              <span
+                className="font-bold px-1"
+                style={
+                  isFlicker
+                    ? { background: palette.ink, color: palette.bg }
+                    : { color: palette.ink }
+                }
+              >
+                {w}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

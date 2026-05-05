@@ -1,48 +1,97 @@
 /* IBM Plex Mono is loaded via <link> in index.html (preconnect + parallel fetch). */
 @import "tailwindcss";
 
-@theme inline {
-  --font-mono: 'IBM Plex Mono', monospace;
-  --color-background: #eeefe9;
-  --color-foreground: #000;
-  --color-cream: #eeefe9;
-  --color-ink: #000;
-  --color-ph-red: #f54e00;
-  --color-ph-blue: #1d4aff;
-  --color-ph-yellow: #f9bd2b;
+/*
+ * Palette-driven CSS variables. The Dashboard sets these on
+ * `document.documentElement` whenever the user picks a palette, so portals
+ * and the modal also pick them up via the cascade. Defaults below match the
+ * "PLOTTER" palette so a server-rendered or pre-hydration paint looks right.
+ */
+:root {
+  --bg: #eeefe9;
+  --ink: #0a0a0a;
+  --accent1: #3066be;
+  --accent2: #d62246;
+  --accent3: #3a8c5f;
+  --shadow-brutal: 4px 4px 0 0 var(--ink);
+
+  /* Backward-compat aliases for code that still references the old tokens. */
+  --cream: var(--bg);
+  --ph-red: var(--accent1);
+  --ph-blue: var(--accent2);
+  --ph-yellow: var(--accent3);
 }
 
-:root {
-  --cream: #eeefe9;
-  --ink: #000;
-  --ph-red: #f54e00;
-  --ph-blue: #1d4aff;
-  --ph-yellow: #f9bd2b;
-  --shadow-brutal: 4px 4px 0 0 #000;
+@theme inline {
+  --font-mono: 'IBM Plex Mono', monospace;
+  --color-background: var(--bg);
+  --color-foreground: var(--ink);
+
+  --color-bg: var(--bg);
+  --color-cream: var(--bg);
+  --color-ink: var(--ink);
+
+  --color-accent1: var(--accent1);
+  --color-accent2: var(--accent2);
+  --color-accent3: var(--accent3);
+
+  /* Backward-compat color tokens — point at the active palette's accents. */
+  --color-ph-red: var(--accent1);
+  --color-ph-blue: var(--accent2);
+  --color-ph-yellow: var(--accent3);
 }
 
 @layer base {
   * {
-    @apply border-ink rounded-none;
+    border-color: var(--ink);
+    border-radius: 0 !important;
   }
-  
+
   body {
-    @apply font-mono antialiased bg-[#eeefe9] text-[#000] overflow-x-hidden;
+    @apply font-mono antialiased overflow-x-hidden;
+    background-color: var(--bg);
+    color: var(--ink);
   }
 }
 
 .brutalist-panel {
-  @apply border-[3px] border-ink bg-cream relative;
+  border: 3px solid var(--ink);
+  background-color: var(--bg);
+  position: relative;
   box-shadow: var(--shadow-brutal);
 }
 
 .brutalist-label {
-  @apply bg-ink text-cream px-2 py-1 text-xs uppercase tracking-widest font-bold border-b-[3px] border-ink;
+  background-color: var(--ink);
+  color: var(--bg);
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  border-bottom: 3px solid var(--ink);
 }
 
 .brutalist-button {
-  @apply border-[3px] border-ink bg-cream text-ink px-4 py-2 uppercase font-bold text-sm tracking-widest cursor-pointer hover:bg-ink hover:text-cream transition-colors duration-0 active:translate-y-[4px] active:translate-x-[4px] active:shadow-none;
+  border: 3px solid var(--ink);
+  background-color: var(--bg);
+  color: var(--ink);
+  padding: 8px 16px;
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 0.875rem;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: none;
   box-shadow: var(--shadow-brutal);
+}
+.brutalist-button:hover {
+  background-color: var(--ink);
+  color: var(--bg);
+}
+.brutalist-button:active {
+  transform: translate(4px, 4px);
+  box-shadow: none;
 }
 
 .caret-blink {

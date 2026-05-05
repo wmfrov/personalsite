@@ -1,22 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
+import { Palette } from '../lib/palettes';
 
 interface LossProps {
   seedData: SeedData;
+  palette: Palette;
   paused?: boolean;
   stepFrame?: number;
 }
 
 interface Snapshot {
-  curve: string;
+  levels: number[];
   level: number;
   prngState: number;
 }
 
 const BLOCKS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+const NUM_BLOCKS = 40;
 
-export function Loss({ seedData, paused = false, stepFrame = 0 }: LossProps) {
-  const [curve, setCurve] = useState<string>('');
+export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossProps) {
+  // Track levels (0..6) per column so we can color-tint each glyph by value.
+  const [levels, setLevels] = useState<number[]>([]);
   const animPrngRef = useRef<SeededPrng | null>(null);
   const levelRef = useRef(BLOCKS.length - 1);
   const historyRef = useRef<Snapshot[]>([]);
@@ -29,36 +33,36 @@ export function Loss({ seedData, paused = false, stepFrame = 0 }: LossProps) {
     lastFrameRef.current = 0;
 
     let currentLevel = BLOCKS.length - 1;
-    let initialCurve = '';
-    for (let i = 0; i < 40; i++) {
+    const initial: number[] = [];
+    for (let i = 0; i < NUM_BLOCKS; i++) {
       if (initPrng() < 0.1) currentLevel = Math.min(BLOCKS.length - 1, currentLevel + 2);
       else if (initPrng() < 0.3) currentLevel = Math.max(0, currentLevel - 1);
-      initialCurve += BLOCKS[currentLevel];
+      initial.push(currentLevel);
     }
     levelRef.current = currentLevel;
-    setCurve(initialCurve);
+    setLevels(initial);
   }, [seedData]);
 
-  const tick = (current: string, level: number, prng: SeededPrng) => {
-    if (!current) return { curve: current, level };
+  const tick = (current: number[], level: number, prng: SeededPrng) => {
+    if (current.length === 0) return { levels: current, level };
     let nextLevel = level;
     if (prng() < 0.1) nextLevel = Math.min(BLOCKS.length - 1, nextLevel + 3);
     else if (prng() < 0.4) nextLevel = Math.max(0, nextLevel - 1);
-    return { curve: current.substring(1) + BLOCKS[nextLevel], level: nextLevel };
+    return { levels: [...current.slice(1), nextLevel], level: nextLevel };
   };
 
   // Seeded phase offset to break tick synchrony with other panels.
   useEffect(() => {
-    if (paused || !curve) return;
+    if (paused || levels.length === 0) return;
     const prng = animPrngRef.current!;
     const phaseOffset = Math.floor(seedData.panelSeeds[PanelSlot.LossAnim] % 250);
     let cleanup: () => void = () => {};
     const start = setTimeout(() => {
       const interval = setInterval(() => {
-        setCurve(prev => {
+        setLevels(prev => {
           const r = tick(prev, levelRef.current, prng);
           levelRef.current = r.level;
-          return r.curve;
+          return r.levels;
         });
       }, 300);
       cleanup = () => clearInterval(interval);
@@ -67,20 +71,20 @@ export function Loss({ seedData, paused = false, stepFrame = 0 }: LossProps) {
       clearTimeout(start);
       cleanup();
     };
-  }, [seedData, curve, paused]);
+  }, [seedData, levels.length, paused]);
 
   useEffect(() => {
-    if (!paused || !curve || !animPrngRef.current) return;
+    if (!paused || levels.length === 0 || !animPrngRef.current) return;
     const prng = animPrngRef.current;
     const delta = stepFrame - lastFrameRef.current;
     if (delta > 0) {
-      setCurve(prev => {
+      setLevels(prev => {
         let s = prev;
         let lvl = levelRef.current;
         for (let i = 0; i < delta; i++) {
-          historyRef.current.push({ curve: s, level: lvl, prngState: prng.getState() });
+          historyRef.current.push({ levels: [...s], level: lvl, prngState: prng.getState() });
           const r = tick(s, lvl, prng);
-          s = r.curve;
+          s = r.levels;
           lvl = r.level;
         }
         levelRef.current = lvl;
@@ -92,23 +96,45 @@ export function Loss({ seedData, paused = false, stepFrame = 0 }: LossProps) {
       if (snap) {
         prng.setState(snap.prngState);
         levelRef.current = snap.level;
-        setCurve(snap.curve);
+        setLevels(snap.levels);
       }
     }
     lastFrameRef.current = stepFrame;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepFrame, paused]);
 
+  // Color buckets: low loss (≤2) = accent3 (good), mid (3-4) = accent2,
+  // high (≥5) = accent1 (alarm).
+  const colorFor = (lvl: number) => {
+    if (lvl <= 2) return palette.accent3;
+    if (lvl <= 4) return palette.accent2;
+    return palette.accent1;
+  };
+
   return (
     <div className="brutalist-panel h-full flex flex-col min-h-0">
       <div className="brutalist-label shrink-0">LOSS</div>
-      <div className="p-4 flex-1 flex flex-col justify-center bg-cream">
+      <div className="p-4 flex-1 flex flex-col justify-center" style={{ background: palette.bg }}>
         <div className="flex items-center gap-2 mb-2">
-          <span className="font-mono text-xs font-bold bg-ink text-cream px-1">L</span>
-          <span className="font-mono text-xs text-ink/50 tracking-widest border-b-2 border-ink border-dotted flex-1">........................................</span>
+          <span
+            className="font-mono text-xs font-bold px-1"
+            style={{ background: palette.ink, color: palette.bg }}
+          >
+            L
+          </span>
+          <span
+            className="font-mono text-xs tracking-widest border-b-2 border-dotted flex-1"
+            style={{ color: palette.ink, opacity: 0.5, borderColor: palette.ink }}
+          >
+            ........................................
+          </span>
         </div>
-        <div className="font-mono text-xl whitespace-nowrap overflow-hidden text-ph-red font-bold tracking-[-1px]">
-          {curve}
+        <div className="font-mono text-xl whitespace-nowrap overflow-hidden font-bold tracking-[-1px]">
+          {levels.map((lvl, i) => (
+            <span key={i} style={{ color: colorFor(lvl) }}>
+              {BLOCKS[lvl]}
+            </span>
+          ))}
         </div>
       </div>
     </div>

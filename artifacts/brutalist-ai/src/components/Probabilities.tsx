@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
+import { Palette } from '../lib/palettes';
 
 interface ProbabilitiesProps {
   seedData: SeedData;
+  palette: Palette;
   paused?: boolean;
   stepFrame?: number;
 }
@@ -20,7 +22,7 @@ interface Snapshot {
 
 const FAKE_LABELS = ['P(refactor)', 'P(ship)', 'P(revert)', 'P(debug)', 'P(coffee)', 'P(build)', 'P(deploy)', 'P(panic)'];
 
-export function Probabilities({ seedData, paused = false, stepFrame = 0 }: ProbabilitiesProps) {
+export function Probabilities({ seedData, palette, paused = false, stepFrame = 0 }: ProbabilitiesProps) {
   const [bars, setBars] = useState<ProbBar[]>([]);
   const jitterPrngRef = useRef<SeededPrng | null>(null);
   const historyRef = useRef<Snapshot[]>([]);
@@ -98,32 +100,53 @@ export function Probabilities({ seedData, paused = false, stepFrame = 0 }: Proba
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepFrame, paused]);
 
+  // Rank bars by current target value to assign podium colors.
+  // Top-3 get accent1/accent2/accent3 (1st/2nd/3rd); the rest stay ink.
+  const rankByTarget = [...bars]
+    .map((b, i) => ({ i, t: b.target }))
+    .sort((a, b) => b.t - a.t);
+  const rankColor = new Map<number, string>();
+  if (rankByTarget[0]) rankColor.set(rankByTarget[0].i, palette.accent1);
+  if (rankByTarget[1]) rankColor.set(rankByTarget[1].i, palette.accent2);
+  if (rankByTarget[2]) rankColor.set(rankByTarget[2].i, palette.accent3);
+
   return (
     <div className="brutalist-panel h-full flex flex-col min-h-0">
       <div className="brutalist-label shrink-0">PROBABILITIES</div>
-      <div className="p-4 flex-1 flex flex-col justify-between font-mono text-sm bg-cream">
-        {bars.map((bar, i) => (
-          <div key={i} className="flex flex-col gap-1">
-            <div className="flex justify-between text-xs">
-              <span className="font-bold">{bar.label}</span>
-              <span>{(bar.target * 100).toFixed(1)}%</span>
+      <div
+        className="p-4 flex-1 flex flex-col justify-between font-mono text-sm"
+        style={{ background: palette.bg }}
+      >
+        {bars.map((bar, i) => {
+          const color = rankColor.get(i) ?? palette.ink;
+          const rank = rankByTarget.findIndex(r => r.i === i);
+          const badge = rank === 0 ? '①' : rank === 1 ? '②' : rank === 2 ? '③' : '·';
+          return (
+            <div key={i} className="flex flex-col gap-1">
+              <div className="flex justify-between text-xs">
+                <span className="font-bold flex items-center gap-1" style={{ color: palette.ink }}>
+                  <span style={{ color }}>{badge}</span>
+                  {bar.label}
+                </span>
+                <span style={{ color }}>{(bar.target * 100).toFixed(1)}%</span>
+              </div>
+              <div className="flex">{renderBar(bar.target, color, palette)}</div>
             </div>
-            <div className="flex">{renderBar(bar.target)}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function renderBar(value: number) {
+function renderBar(value: number, color: string, palette: Palette) {
   const totalBlocks = 20;
   const filledBlocks = Math.floor(value * totalBlocks);
   const emptyBlocks = totalBlocks - filledBlocks;
   return (
-    <div className="text-ph-blue font-bold tracking-[-1px]">
-      {'█'.repeat(filledBlocks)}
-      {'░'.repeat(emptyBlocks)}
+    <div className="font-bold tracking-[-1px]">
+      <span style={{ color }}>{'█'.repeat(filledBlocks)}</span>
+      <span style={{ color: palette.ink, opacity: 0.3 }}>{'░'.repeat(emptyBlocks)}</span>
     </div>
   );
 }

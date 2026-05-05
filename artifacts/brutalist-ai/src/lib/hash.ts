@@ -40,7 +40,12 @@ export interface SeedData {
   hash: string;
   seedInt: number;
   prng: SeededPrng;
-  accentColor: string;
+  /**
+   * Index into the active palette's three accents (0 = accent1, etc.).
+   * Derived deterministically from the SHA-256 hash so the same seed
+   * always picks the same accent slot regardless of which palette is active.
+   */
+  accentIndex: 0 | 1 | 2;
   youX: number;
   youY: number;
   /** Per-panel seeds parsed directly from non-overlapping SHA-256 slices. */
@@ -76,10 +81,9 @@ export async function parseSeed(input: string): Promise<SeedData> {
   const seedInt = parseInt(hash.substring(0, 8), 16);
   const prng = mulberry32(seedInt);
 
-  // 8..10  -> accent color (PostHog red / blue / yellow)
+  // 8..10  -> accent slot (index into the active palette's three accents)
   const accentByte = parseInt(hash.substring(8, 10), 16);
-  const accents = ['#f54e00', '#1d4aff', '#f9bd2b'];
-  const accentColor = accents[accentByte % 3];
+  const accentIndex = (accentByte % 3) as 0 | 1 | 2;
 
   // 10..14 -> "you" dot position
   const xByte = parseInt(hash.substring(10, 12), 16);
@@ -101,7 +105,7 @@ export async function parseSeed(input: string): Promise<SeedData> {
     hash,
     seedInt,
     prng,
-    accentColor,
+    accentIndex,
     youX,
     youY,
     panelSeeds,
