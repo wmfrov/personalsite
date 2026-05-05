@@ -14,14 +14,19 @@ const NUM_PINNED = 6;
 const TRAIL_LIFETIME_MS = 900;
 
 // Training-arc tunables. Each physics tick advances `step` by 1 (live and
-// paused/scrub). An epoch lasts EPOCH_TOTAL_STEPS ticks: the first
-// EPOCH_CONVERGE_STEPS migrate dots from random `startX/Y` toward their
-// cluster `homeX/Y` via an ease-out curve, then EPOCH_HOLD_STEPS hold at
-// peak sharpness before re-randomizing for the next epoch. At ~60fps these
-// land near 6s converge + 3s hold ~= 9s per epoch.
+// paused/scrub). An epoch is three back-to-back phases:
+//   1. DISPERSE  — dots ease from their previous resting position to fresh
+//                  random start positions for this epoch (smooth
+//                  re-randomization, no hard cut at epoch boundaries).
+//   2. CONVERGE  — dots ease from those random starts toward their
+//                  cluster's converged home, ease-out cubic.
+//   3. HOLD      — dots remain at home; snap-jumps may fire here.
+// At ~60fps this is ~1.5s + 6s + 1.5s ≈ 9s per epoch.
+const EPOCH_DISPERSE_STEPS = 90;
 const EPOCH_CONVERGE_STEPS = 360;
-const EPOCH_HOLD_STEPS = 180;
-const EPOCH_TOTAL_STEPS = EPOCH_CONVERGE_STEPS + EPOCH_HOLD_STEPS;
+const EPOCH_HOLD_STEPS = 90;
+const EPOCH_TOTAL_STEPS = EPOCH_DISPERSE_STEPS + EPOCH_CONVERGE_STEPS + EPOCH_HOLD_STEPS;
+const HOLD_PHASE_START_STEP = EPOCH_DISPERSE_STEPS + EPOCH_CONVERGE_STEPS;
 // Tight Gaussian sigma around the cluster centroid at peak sharpness —
 // less than half the old free-drift sigma (0.085), so converged epochs
 // look visibly cleaner than the old steady state ever did.
@@ -73,14 +78,26 @@ interface Dot {
   shape: number;          // 0=circle 1=square 2=triangle 3=diamond 4=plus
   size: number;           // pixel side length
   pinned: boolean;        // always-show label
-  /** Cluster-converged target ("trained" position). Resampled per dot at
-   *  init from cluster centroid + Gaussian; can be re-jittered per epoch. */
+  /** Cluster-converged target ("trained" position) for the CURRENT epoch.
+   *  Resampled at every epoch reset from `clusterCentroidX/Y` + Gaussian
+   *  (using animPrng) so snap-jumps can't permanently degrade cluster
+   *  purity — each new epoch restores a clean home. */
   homeX: number;
   homeY: number;
   /** Random init position for the current epoch (uniform across panel).
    *  Resampled each epoch reset from the animation PRNG. */
   startX: number;
   startY: number;
+  /** Position the dot was at when the current epoch began. The DISPERSE
+   *  phase eases from here to `startX/Y` so the re-randomization is
+   *  visually smooth instead of a hard cut. */
+  disperseFromX: number;
+  disperseFromY: number;
+  /** Stable cluster centroid for this dot — the anchor home positions
+   *  re-jitter around. Set once at init; never changes after that, so
+   *  long-run cluster purity is preserved across many epochs. */
+  clusterCentroidX: number;
+  clusterCentroidY: number;
   /** Per-dot phases for the breathing jitter overlay. */
   jitterPhaseX: number;
   jitterPhaseY: number;
@@ -236,7 +253,7 @@ export function EmbeddingSpace({
   // values without rebuilding the rAF loop every frame).
   const stepRef = useRef(0);
   const epochRef = useRef(0);
-  const nextSnapStepRef = useRef(EPOCH_CONVERGE_STEPS + 30);
+  const nextSnapStepRef = useRef(HOLD_PHASE_START_STEP + 30);
 
   useEffect(() => {
     const prng = derivePrng(seedData, PanelSlot.EmbeddingLayout);
@@ -282,6 +299,10 @@ export function EmbeddingSpace({
       homeY: seedData.youY,
       startX: seedData.youX,
       startY: seedData.youY,
+      disperseFromX: seedData.youX,
+      disperseFromY: seedData.youY,
+      clusterCentroidX: seedData.youX,
+      clusterCentroidY: seedData.youY,
       jitterPhaseX: 0,
       jitterPhaseY: 0,
       svx: 0,
@@ -335,6 +356,13 @@ export function EmbeddingSpace({
         homeY,
         startX,
         startY,
+        // Epoch 0 has no "previous resting position"; setting disperseFrom
+        // = startX/Y makes the DISPERSE phase a no-op (dot sits at its
+        // random start) before the visible CONVERGE migration begins.
+        disperseFromX: startX,
+        disperseFromY: startY,
+        clusterCentroidX: c.centroidX,
+        clusterCentroidY: c.centroidY,
         jitterPhaseX,
         jitterPhaseY,
         svx: 0,
@@ -347,7 +375,7 @@ export function EmbeddingSpace({
     dotsRef.current = newDots;
     stepRef.current = 0;
     epochRef.current = 0;
-    nextSnapStepRef.current = EPOCH_CONVERGE_STEPS + 30;
+    nextSnapStepRef.current = HOLD_PHASE_START_STEP + 30;
     setEpochStep({ epoch: 0, step: 0 });
     historyRef.current = [];
     trailsRef.current = [];
@@ -362,27 +390,37 @@ export function EmbeddingSpace({
     stepRef.current += 1;
     const step = stepRef.current;
 
-    // Epoch reset: re-pick fresh start positions for every non-"you" dot,
-    // increment epoch, reset step. Drains animPrng deterministically so the
-    // sequence of epochs is fully reproducible per seed.
+    // Epoch reset: smoothly re-randomize. For every non-"you" dot, freeze
+    // its current visual position as `disperseFromX/Y` (so the new epoch's
+    // DISPERSE phase eases out of where it was), pick fresh random
+    // `startX/Y`, and resample `homeX/Y` from the dot's stable
+    // `clusterCentroidX/Y` + Gaussian. Resampling home is what restores
+    // cluster purity after snap-jumps mutated `homeX/Y` during the hold —
+    // each new epoch starts from a clean cluster again.
     if (step >= EPOCH_TOTAL_STEPS) {
       const ap = animPrngRef.current;
       if (ap) {
         for (const d of dotsRef.current) {
           if (d.isYou) continue;
+          d.disperseFromX = d.x;
+          d.disperseFromY = d.y;
           d.startX = 0.04 + ap() * 0.92;
           d.startY = 0.04 + ap() * 0.92;
+          let nh = d.clusterCentroidX + gaussian(ap) * HOME_SIGMA;
+          let nv = d.clusterCentroidY + gaussian(ap) * HOME_SIGMA;
+          d.homeX = Math.max(0.04, Math.min(0.96, nh));
+          d.homeY = Math.max(0.04, Math.min(0.96, nv));
         }
       }
       epochRef.current += 1;
       stepRef.current = 0;
-      nextSnapStepRef.current = EPOCH_CONVERGE_STEPS + 30;
+      nextSnapStepRef.current = HOLD_PHASE_START_STEP + 30;
     }
 
     // Snap-jump: only eligible during the settled hold phase (suppressed
-    // during convergence so it doesn't fight the migration). Replaces the
-    // old wall-clock-driven snap timer with a step-keyed schedule.
-    const inHold = stepRef.current >= EPOCH_CONVERGE_STEPS;
+    // during DISPERSE + CONVERGE so it doesn't fight the migration).
+    // Step-keyed schedule keeps it deterministic across pause/scrub.
+    const inHold = stepRef.current >= HOLD_PHASE_START_STEP;
     if (inHold && stepRef.current >= nextSnapStepRef.current) {
       nextSnapStepRef.current = stepRef.current + SNAP_PERIOD_STEPS;
       const ap = animPrngRef.current;
@@ -392,8 +430,10 @@ export function EmbeddingSpace({
         if (d && !d.isYou) {
           // Intentional hard-cut teleport on top of the converged target —
           // moves the dot's home so the snap reads as "this token just
-          // remapped within the embedding space". Trails are a LIVE-only
-          // decoration (see paused-mode comment in render).
+          // remapped within the embedding space". The mutation is bounded
+          // to the current epoch: the next epoch reset resamples home from
+          // `clusterCentroidX/Y`, restoring cluster purity. Trails are a
+          // LIVE-only decoration (see paused-mode comment in render).
           const fromX = d.x;
           const fromY = d.y;
           const newHomeX = 0.05 + ap() * 0.9;
@@ -431,11 +471,25 @@ export function EmbeddingSpace({
     const rect = container.getBoundingClientRect();
     const mouseActive = mouseRef.current.active;
 
-    // Training-arc progress: 0 at epoch start, 1 at end of converge phase,
-    // held at 1 through the settled phase. Ease-out cubic so the early
-    // migration feels fast and the final settle feels patient.
-    const progress = Math.min(1, stepRef.current / EPOCH_CONVERGE_STEPS);
-    const eased = 1 - Math.pow(1 - progress, 3);
+    // Training-arc phase + eased phase progress. DISPERSE eases from the
+    // dot's previous resting position to the new random start; CONVERGE
+    // eases from the random start to the cluster home; HOLD pins at home.
+    // Ease-out cubic in both moving phases — early motion feels fast, the
+    // tail of each phase feels patient.
+    let phase: 'disperse' | 'converge' | 'hold';
+    let phaseProgress: number;
+    const sStep = stepRef.current;
+    if (sStep < EPOCH_DISPERSE_STEPS) {
+      phase = 'disperse';
+      phaseProgress = sStep / EPOCH_DISPERSE_STEPS;
+    } else if (sStep < HOLD_PHASE_START_STEP) {
+      phase = 'converge';
+      phaseProgress = (sStep - EPOCH_DISPERSE_STEPS) / EPOCH_CONVERGE_STEPS;
+    } else {
+      phase = 'hold';
+      phaseProgress = 1;
+    }
+    const eased = phase === 'hold' ? 1 : 1 - Math.pow(1 - phaseProgress, 3);
 
     const newDots = [...dotsRef.current];
 
@@ -443,14 +497,23 @@ export function EmbeddingSpace({
       const dot = newDots[i];
 
       if (!dot.isYou) {
-        // Lerp from this epoch's random start to the converged home, then
-        // overlay a small per-dot sinusoidal jitter so even at peak
-        // sharpness the cluster keeps breathing. Pure function of
-        // (step, dot fields) → fully deterministic, snapshot-stable.
-        const easedX = dot.startX + (dot.homeX - dot.startX) * eased;
-        const easedY = dot.startY + (dot.homeY - dot.startY) * eased;
-        const jx = JITTER_AMP * Math.sin(stepRef.current * 0.04 + dot.jitterPhaseX);
-        const jy = JITTER_AMP * Math.cos(stepRef.current * 0.05 + dot.jitterPhaseY);
+        // Pick the lerp endpoints based on the current phase. Then overlay
+        // a small per-dot sinusoidal jitter so even at peak sharpness the
+        // cluster keeps breathing. Pure function of (step, dot fields) →
+        // fully deterministic, snapshot-stable.
+        let fromX: number, fromY: number, toX: number, toY: number;
+        if (phase === 'disperse') {
+          fromX = dot.disperseFromX; fromY = dot.disperseFromY;
+          toX = dot.startX;          toY = dot.startY;
+        } else {
+          // converge | hold (eased = 1 in hold so this collapses to home)
+          fromX = dot.startX; fromY = dot.startY;
+          toX = dot.homeX;    toY = dot.homeY;
+        }
+        const easedX = fromX + (toX - fromX) * eased;
+        const easedY = fromY + (toY - fromY) * eased;
+        const jx = JITTER_AMP * Math.sin(sStep * 0.04 + dot.jitterPhaseX);
+        const jy = JITTER_AMP * Math.cos(sStep * 0.05 + dot.jitterPhaseY);
         dot.baseX = Math.max(0, Math.min(1, easedX + jx));
         dot.baseY = Math.max(0, Math.min(1, easedY + jy));
       }
