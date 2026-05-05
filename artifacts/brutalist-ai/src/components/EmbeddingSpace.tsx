@@ -13,6 +13,29 @@ const NUM_CLUSTERS = 4;
 const NUM_PINNED = 6;
 const TRAIL_LIFETIME_MS = 900;
 
+// Training-arc tunables. Each physics tick advances `step` by 1 (live and
+// paused/scrub). An epoch lasts EPOCH_TOTAL_STEPS ticks: the first
+// EPOCH_CONVERGE_STEPS migrate dots from random `startX/Y` toward their
+// cluster `homeX/Y` via an ease-out curve, then EPOCH_HOLD_STEPS hold at
+// peak sharpness before re-randomizing for the next epoch. At ~60fps these
+// land near 6s converge + 3s hold ~= 9s per epoch.
+const EPOCH_CONVERGE_STEPS = 360;
+const EPOCH_HOLD_STEPS = 180;
+const EPOCH_TOTAL_STEPS = EPOCH_CONVERGE_STEPS + EPOCH_HOLD_STEPS;
+// Tight Gaussian sigma around the cluster centroid at peak sharpness —
+// less than half the old free-drift sigma (0.085), so converged epochs
+// look visibly cleaner than the old steady state ever did.
+const HOME_SIGMA = 0.035;
+// Tiny per-frame sinusoidal jitter applied on top of the eased base,
+// driven by per-dot phases — keeps the cloud breathing even at peak
+// sharpness without breaking the cluster shape.
+const JITTER_AMP = 0.006;
+// Snap-jumps are gated to the settled hold phase only (so they don't
+// fight the migration). One eligible attempt every SNAP_PERIOD_STEPS
+// ticks, with ~50% chance of firing.
+const SNAP_PERIOD_STEPS = 180;
+const TAU = Math.PI * 2;
+
 // Connection-layer tunables (replaces convex hulls).
 // FOG mode draws every pair within PROX_RADIUS as faint ink strands plus a
 // k-NN layer in cluster colors on top. ATTN mode draws a quiet k-NN ink
@@ -50,9 +73,17 @@ interface Dot {
   shape: number;          // 0=circle 1=square 2=triangle 3=diamond 4=plus
   size: number;           // pixel side length
   pinned: boolean;        // always-show label
-  /** Drift velocity (slow random walk). */
-  vx: number;
-  vy: number;
+  /** Cluster-converged target ("trained" position). Resampled per dot at
+   *  init from cluster centroid + Gaussian; can be re-jittered per epoch. */
+  homeX: number;
+  homeY: number;
+  /** Random init position for the current epoch (uniform across panel).
+   *  Resampled each epoch reset from the animation PRNG. */
+  startX: number;
+  startY: number;
+  /** Per-dot phases for the breathing jitter overlay. */
+  jitterPhaseX: number;
+  jitterPhaseY: number;
   /** Spring velocity used by the cursor-attraction integrator (overshoot). */
   svx: number;
   svy: number;
@@ -60,7 +91,9 @@ interface Dot {
 
 interface FrameSnapshot {
   dots: Dot[];
-  snapTimer: number;
+  step: number;
+  epoch: number;
+  nextSnapStep: number;
   prngState: number;
 }
 
@@ -189,6 +222,8 @@ export function EmbeddingSpace({
   const [nearestNeighbors, setNearestNeighbors] = useState<number[]>([]);
   const [clusters, setClusters] = useState<ClusterMeta[]>([]);
   const [mode, setMode] = useState<ConnectionMode>('fog');
+  // Surfaced for the EPOCH/STEP header chip; updated every physics tick.
+  const [epochStep, setEpochStep] = useState({ epoch: 0, step: 0 });
   const [, forceTick] = useState(0); // re-render trails over time even if dots don't change
 
   const mouseRef = useRef({ x: -1000, y: -1000, active: false });
@@ -197,11 +232,17 @@ export function EmbeddingSpace({
   const historyRef = useRef<FrameSnapshot[]>([]);
   const lastFrameRef = useRef(0);
   const trailsRef = useRef<Trail[]>([]);
+  // Training-arc state (refs so the per-tick physics closure reads fresh
+  // values without rebuilding the rAF loop every frame).
+  const stepRef = useRef(0);
+  const epochRef = useRef(0);
+  const nextSnapStepRef = useRef(EPOCH_CONVERGE_STEPS + 30);
 
   useEffect(() => {
     const prng = derivePrng(seedData, PanelSlot.EmbeddingLayout);
     // Separate animation PRNG so snap-jumps stay reproducible per seed.
-    animPrngRef.current = derivePrng(seedData, PanelSlot.EmbeddingAnim);
+    const animPrng = derivePrng(seedData, PanelSlot.EmbeddingAnim);
+    animPrngRef.current = animPrng;
 
     // Cluster centroids spread across panel with seeded jitter.
     const baseCentroids = [
@@ -220,6 +261,8 @@ export function EmbeddingSpace({
     const newDots: Dot[] = [];
 
     // "You" dot uses precise position from seedData so it stays seed-stable.
+    // It does not participate in the training arc — it's the fixed reference
+    // point across all epochs.
     newDots.push({
       id: 0,
       baseX: seedData.youX,
@@ -235,8 +278,12 @@ export function EmbeddingSpace({
       shape: 1, // square (matches the "you" emphasis)
       size: 14,
       pinned: true,
-      vx: (prng() - 0.5) * 0.001,
-      vy: (prng() - 0.5) * 0.001,
+      homeX: seedData.youX,
+      homeY: seedData.youY,
+      startX: seedData.youX,
+      startY: seedData.youY,
+      jitterPhaseX: 0,
+      jitterPhaseY: 0,
       svx: 0,
       svy: 0,
     });
@@ -250,24 +297,33 @@ export function EmbeddingSpace({
     for (let i = 0; i < NUM_DOTS - 1; i++) {
       const cluster = i % NUM_CLUSTERS; // round-robin → ~equal-sized clusters
       const c = newClusters[cluster];
-      // Gaussian scatter around the centroid; clamp inside [0.04..0.96].
-      let x = c.centroidX + gaussian(prng) * 0.085;
-      let y = c.centroidY + gaussian(prng) * 0.085;
-      x = Math.max(0.04, Math.min(0.96, x));
-      y = Math.max(0.04, Math.min(0.96, y));
+      // Tight Gaussian scatter around the centroid: this is the converged
+      // "trained" target. Clamp inside [0.04..0.96] to keep it on-canvas.
+      let homeX = c.centroidX + gaussian(prng) * HOME_SIGMA;
+      let homeY = c.centroidY + gaussian(prng) * HOME_SIGMA;
+      homeX = Math.max(0.04, Math.min(0.96, homeX));
+      homeY = Math.max(0.04, Math.min(0.96, homeY));
 
       const shape = Math.floor(prng() * 5);
       const sizeRoll = prng();
       const size = sizeRoll < 0.55 ? 6 : sizeRoll < 0.9 ? 8 : 10;
+      const jitterPhaseX = prng() * TAU;
+      const jitterPhaseY = prng() * TAU;
+
+      // Random init position (uniform across the panel) for epoch 0,
+      // sampled from the animation PRNG so subsequent epoch resets stay on
+      // a single reproducible stream.
+      const startX = 0.04 + animPrng() * 0.92;
+      const startY = 0.04 + animPrng() * 0.92;
 
       newDots.push({
         id: i + 1,
-        baseX: x,
-        baseY: y,
-        targetX: x,
-        targetY: y,
-        x,
-        y,
+        baseX: startX,
+        baseY: startY,
+        targetX: startX,
+        targetY: startY,
+        x: startX,
+        y: startY,
         label: tokens[i],
         lag: 0.05 + prng() * 0.2,
         isYou: false,
@@ -275,8 +331,12 @@ export function EmbeddingSpace({
         shape,
         size,
         pinned: pinnedIds.has(i + 1),
-        vx: (prng() - 0.5) * 0.0005,
-        vy: (prng() - 0.5) * 0.0005,
+        homeX,
+        homeY,
+        startX,
+        startY,
+        jitterPhaseX,
+        jitterPhaseY,
         svx: 0,
         svy: 0,
       });
@@ -285,36 +345,67 @@ export function EmbeddingSpace({
     setClusters(newClusters);
     setDots(newDots);
     dotsRef.current = newDots;
-    snapTimerRef.current = 0;
+    stepRef.current = 0;
+    epochRef.current = 0;
+    nextSnapStepRef.current = EPOCH_CONVERGE_STEPS + 30;
+    setEpochStep({ epoch: 0, step: 0 });
     historyRef.current = [];
     trailsRef.current = [];
     lastFrameRef.current = 0;
   }, [seedData]);
 
-  const snapTimerRef = useRef(0);
-  const stepPhysics = (dt: number) => {
-    snapTimerRef.current += dt;
-    if (snapTimerRef.current > 3000) {
-      snapTimerRef.current = 0;
+  const stepPhysics = (_dt: number) => {
+    // Each call advances exactly one tick. The live rAF loop calls us at
+    // ~60Hz; paused/scrub calls us per arrow press. Driving everything from
+    // a discrete step counter (not wall-clock dt) is what makes the paused
+    // export stream byte-identical across runs and machines.
+    stepRef.current += 1;
+    const step = stepRef.current;
+
+    // Epoch reset: re-pick fresh start positions for every non-"you" dot,
+    // increment epoch, reset step. Drains animPrng deterministically so the
+    // sequence of epochs is fully reproducible per seed.
+    if (step >= EPOCH_TOTAL_STEPS) {
+      const ap = animPrngRef.current;
+      if (ap) {
+        for (const d of dotsRef.current) {
+          if (d.isYou) continue;
+          d.startX = 0.04 + ap() * 0.92;
+          d.startY = 0.04 + ap() * 0.92;
+        }
+      }
+      epochRef.current += 1;
+      stepRef.current = 0;
+      nextSnapStepRef.current = EPOCH_CONVERGE_STEPS + 30;
+    }
+
+    // Snap-jump: only eligible during the settled hold phase (suppressed
+    // during convergence so it doesn't fight the migration). Replaces the
+    // old wall-clock-driven snap timer with a step-keyed schedule.
+    const inHold = stepRef.current >= EPOCH_CONVERGE_STEPS;
+    if (inHold && stepRef.current >= nextSnapStepRef.current) {
+      nextSnapStepRef.current = stepRef.current + SNAP_PERIOD_STEPS;
       const ap = animPrngRef.current;
       if (ap && ap() > 0.5 && dotsRef.current.length > 1) {
         const idx = 1 + Math.floor(ap() * (dotsRef.current.length - 1));
         const d = dotsRef.current[idx];
-        if (d) {
-          // Intentional hard-cut teleport: brutalist snap-jump is a single-
-          // frame relocation. Trails are a LIVE-only decoration — they read
-          // from `performance.now()`, so emitting them in export/paused mode
-          // would make the same `stepFrame` render differently depending on
-          // wall-clock time, breaking byte-identical bidirectional stepping.
-          // We therefore only push trails while live.
+        if (d && !d.isYou) {
+          // Intentional hard-cut teleport on top of the converged target —
+          // moves the dot's home so the snap reads as "this token just
+          // remapped within the embedding space". Trails are a LIVE-only
+          // decoration (see paused-mode comment in render).
           const fromX = d.x;
           const fromY = d.y;
-          d.baseX = ap();
-          d.baseY = ap();
-          d.x = d.baseX;
-          d.y = d.baseY;
-          d.targetX = d.baseX;
-          d.targetY = d.baseY;
+          const newHomeX = 0.05 + ap() * 0.9;
+          const newHomeY = 0.05 + ap() * 0.9;
+          d.homeX = newHomeX;
+          d.homeY = newHomeY;
+          d.baseX = newHomeX;
+          d.baseY = newHomeY;
+          d.x = newHomeX;
+          d.y = newHomeY;
+          d.targetX = newHomeX;
+          d.targetY = newHomeY;
           if (!paused) {
             trailsRef.current.push({
               fromX,
@@ -329,7 +420,7 @@ export function EmbeddingSpace({
       }
     }
 
-    // Drop expired trails.
+    // Drop expired trails (LIVE-only decoration).
     if (trailsRef.current.length > 0) {
       const now = performance.now();
       trailsRef.current = trailsRef.current.filter(t => now - t.startedAt < TRAIL_LIFETIME_MS);
@@ -340,12 +431,31 @@ export function EmbeddingSpace({
     const rect = container.getBoundingClientRect();
     const mouseActive = mouseRef.current.active;
 
+    // Training-arc progress: 0 at epoch start, 1 at end of converge phase,
+    // held at 1 through the settled phase. Ease-out cubic so the early
+    // migration feels fast and the final settle feels patient.
+    const progress = Math.min(1, stepRef.current / EPOCH_CONVERGE_STEPS);
+    const eased = 1 - Math.pow(1 - progress, 3);
+
     const newDots = [...dotsRef.current];
 
     for (let i = 0; i < newDots.length; i++) {
       const dot = newDots[i];
 
-      if (mouseActive) {
+      if (!dot.isYou) {
+        // Lerp from this epoch's random start to the converged home, then
+        // overlay a small per-dot sinusoidal jitter so even at peak
+        // sharpness the cluster keeps breathing. Pure function of
+        // (step, dot fields) → fully deterministic, snapshot-stable.
+        const easedX = dot.startX + (dot.homeX - dot.startX) * eased;
+        const easedY = dot.startY + (dot.homeY - dot.startY) * eased;
+        const jx = JITTER_AMP * Math.sin(stepRef.current * 0.04 + dot.jitterPhaseX);
+        const jy = JITTER_AMP * Math.cos(stepRef.current * 0.05 + dot.jitterPhaseY);
+        dot.baseX = Math.max(0, Math.min(1, easedX + jx));
+        dot.baseY = Math.max(0, Math.min(1, easedY + jy));
+      }
+
+      if (mouseActive && !paused) {
         const mx = (mouseRef.current.x - rect.left) / rect.width;
         const my = (mouseRef.current.y - rect.top) / rect.height;
         const dx = mx - dot.baseX;
@@ -357,12 +467,6 @@ export function EmbeddingSpace({
       } else {
         dot.targetX = dot.baseX;
         dot.targetY = dot.baseY;
-        dot.baseX += dot.vx;
-        dot.baseY += dot.vy;
-        if (dot.baseX < 0 || dot.baseX > 1) dot.vx *= -1;
-        if (dot.baseY < 0 || dot.baseY > 1) dot.vy *= -1;
-        dot.baseX = Math.max(0, Math.min(1, dot.baseX));
-        dot.baseY = Math.max(0, Math.min(1, dot.baseY));
       }
 
       // Spring + damping for cursor-attract overshoot.
@@ -375,6 +479,7 @@ export function EmbeddingSpace({
 
     dotsRef.current = newDots;
     setDots(newDots);
+    setEpochStep({ epoch: epochRef.current, step: stepRef.current });
   };
 
   useEffect(() => {
@@ -405,7 +510,9 @@ export function EmbeddingSpace({
       for (let i = 0; i < delta; i++) {
         historyRef.current.push({
           dots: dotsRef.current.map(d => ({ ...d })),
-          snapTimer: snapTimerRef.current,
+          step: stepRef.current,
+          epoch: epochRef.current,
+          nextSnapStep: nextSnapStepRef.current,
           prngState: prng.getState(),
         });
         stepPhysics(16);
@@ -415,9 +522,12 @@ export function EmbeddingSpace({
       for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
       if (snap) {
         prng.setState(snap.prngState);
-        snapTimerRef.current = snap.snapTimer;
+        stepRef.current = snap.step;
+        epochRef.current = snap.epoch;
+        nextSnapStepRef.current = snap.nextSnapStep;
         dotsRef.current = snap.dots.map(d => ({ ...d }));
         setDots(dotsRef.current);
+        setEpochStep({ epoch: snap.epoch, step: snap.step });
       }
     }
     lastFrameRef.current = stepFrame;
@@ -554,7 +664,9 @@ export function EmbeddingSpace({
               aria-label="Attention from you to top-k"
             >ATTN</button>
           </div>
-          <span style={{ color: palette.bg, opacity: 0.5 }}>D-256 · N={NUM_DOTS}</span>
+          <span style={{ color: palette.bg, opacity: 0.5 }}>
+            EPOCH {epochStep.epoch.toString().padStart(2, '0')} · STEP {epochStep.step.toString().padStart(4, '0')} · N={NUM_DOTS}
+          </span>
         </div>
       </div>
 
