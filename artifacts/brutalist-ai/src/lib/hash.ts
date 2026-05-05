@@ -7,21 +7,39 @@ export async function generateHash(input: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function mulberry32(seed: number) {
-  return function() {
-    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-    let t = seed;
-    t = Math.imul(t ^ t >>> 15, t | 1);
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  }
+/**
+ * Stateful Mulberry32 PRNG. The returned function is callable as `prng()` for
+ * the next [0,1) value, and exposes `getState()` / `setState(n)` so callers
+ * can snapshot and restore PRNG state — required for true backward frame
+ * stepping in export mode.
+ */
+export interface SeededPrng {
+  (): number;
+  getState(): number;
+  setState(s: number): void;
+}
+
+export function mulberry32(seed: number): SeededPrng {
+  let state = seed | 0;
+  const fn = (() => {
+    state = (state + 0x6D2B79F5) | 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }) as SeededPrng;
+  fn.getState = () => state;
+  fn.setState = (s: number) => {
+    state = s | 0;
+  };
+  return fn;
 }
 
 export interface SeedData {
   input: string;
   hash: string;
   seedInt: number;
-  prng: () => number;
+  prng: SeededPrng;
   accentColor: string;
   youX: number;
   youY: number;
@@ -47,7 +65,7 @@ export const PanelSlot = {
  * 5-hex-char slice of the SHA-256 hash, so randomness is fully derived from
  * the input string and stays deterministic per seed.
  */
-export function derivePrng(seed: SeedData, slot: number) {
+export function derivePrng(seed: SeedData, slot: number): SeededPrng {
   return mulberry32(seed.panelSeeds[slot] ?? seed.seedInt);
 }
 

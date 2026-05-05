@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { SeedData, derivePrng, PanelSlot } from '../lib/hash';
+import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { generateEmbeddingTokens } from '../lib/tokens';
 
 interface EmbeddingSpaceProps {
@@ -20,8 +20,18 @@ interface Dot {
   label: string;
   lag: number;
   isYou: boolean;
+  /** Drift velocity (slow random walk). */
   vx: number;
   vy: number;
+  /** Spring velocity used by the cursor-attraction integrator (overshoot). */
+  svx: number;
+  svy: number;
+}
+
+interface FrameSnapshot {
+  dots: Dot[];
+  snapTimer: number;
+  prngState: number;
 }
 
 export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: EmbeddingSpaceProps) {
@@ -32,7 +42,9 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
   
   const mouseRef = useRef({ x: -1000, y: -1000, active: false });
   const dotsRef = useRef<Dot[]>([]);
-  const animPrngRef = useRef<() => number>(() => 0);
+  const animPrngRef = useRef<SeededPrng | null>(null);
+  const historyRef = useRef<FrameSnapshot[]>([]);
+  const lastFrameRef = useRef(0);
 
   // Initialize dots from seed
   useEffect(() => {
@@ -56,12 +68,14 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
       x: seedData.youX,
       y: seedData.youY,
       label: seedData.input,
-      lag: 0.1, // Faster response for user dot
+      lag: 0.1,
       isYou: true,
       vx: (prng() - 0.5) * 0.001,
-      vy: (prng() - 0.5) * 0.001
+      vy: (prng() - 0.5) * 0.001,
+      svx: 0,
+      svy: 0,
     });
-    
+
     // Add other dots
     for (let i = 0; i < numDots - 1; i++) {
       const x = prng();
@@ -72,18 +86,23 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
         baseY: y,
         targetX: x,
         targetY: y,
-        x: x,
-        y: y,
+        x,
+        y,
         label: tokens[i],
-        lag: 0.05 + prng() * 0.2, // Lag between 0.05 and 0.25
+        lag: 0.05 + prng() * 0.2,
         isYou: false,
         vx: (prng() - 0.5) * 0.0005,
-        vy: (prng() - 0.5) * 0.0005
+        vy: (prng() - 0.5) * 0.0005,
+        svx: 0,
+        svy: 0,
       });
     }
-    
+
     setDots(newDots);
     dotsRef.current = newDots;
+    snapTimerRef.current = 0;
+    historyRef.current = [];
+    lastFrameRef.current = 0;
   }, [seedData]);
   
   // Single physics step. dt is in ms; pass ~16 for one frame's worth.
@@ -93,7 +112,7 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
     if (snapTimerRef.current > 3000) {
       snapTimerRef.current = 0;
       const ap = animPrngRef.current;
-      if (ap() > 0.5 && dotsRef.current.length > 1) {
+      if (ap && ap() > 0.5 && dotsRef.current.length > 1) {
         const idx = 1 + Math.floor(ap() * (dotsRef.current.length - 1));
         if (dotsRef.current[idx]) {
           dotsRef.current[idx].baseX = ap();
@@ -136,8 +155,14 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
         dot.baseY = Math.max(0, Math.min(1, dot.baseY));
       }
 
-      dot.x += (dot.targetX - dot.x) * dot.lag;
-      dot.y += (dot.targetY - dot.y) * dot.lag;
+      // Velocity-based spring with damping → produces a slight overshoot
+      // when the cursor attraction snaps targets into place.
+      const stiffness = dot.lag * 1.4;
+      const damping = 0.62;
+      dot.svx = dot.svx * damping + (dot.targetX - dot.x) * stiffness;
+      dot.svy = dot.svy * damping + (dot.targetY - dot.y) * stiffness;
+      dot.x += dot.svx;
+      dot.y += dot.svy;
     }
 
     dotsRef.current = newDots;
@@ -162,10 +187,35 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused]);
 
-  // Paused mode: each arrow press advances one frame (~16ms) of physics.
+  // Paused mode: bidirectional frame stepping with full snapshot history
+  // (dots, snapTimer, PRNG state) so forward → back → forward returns to
+  // the exact same physical state.
   useEffect(() => {
-    if (!paused || stepFrame === 0) return;
-    stepPhysics(16);
+    if (!paused) return;
+    const prng = animPrngRef.current;
+    if (!prng) return;
+
+    const delta = stepFrame - lastFrameRef.current;
+    if (delta > 0) {
+      for (let i = 0; i < delta; i++) {
+        historyRef.current.push({
+          dots: dotsRef.current.map(d => ({ ...d })),
+          snapTimer: snapTimerRef.current,
+          prngState: prng.getState(),
+        });
+        stepPhysics(16);
+      }
+    } else if (delta < 0) {
+      let snap: FrameSnapshot | undefined;
+      for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
+      if (snap) {
+        prng.setState(snap.prngState);
+        snapTimerRef.current = snap.snapTimer;
+        dotsRef.current = snap.dots.map(d => ({ ...d }));
+        setDots(dotsRef.current);
+      }
+    }
+    lastFrameRef.current = stepFrame;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepFrame, paused]);
   

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { SeedData, derivePrng, PanelSlot } from '../lib/hash';
+import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { generateCharGrams } from '../lib/tokens';
 
 interface TokenStreamProps {
@@ -8,28 +8,36 @@ interface TokenStreamProps {
   stepFrame?: number;
 }
 
+interface Snapshot {
+  stream: string;
+  idx: number;
+}
+
 const MAX_LEN = 220;
 
 export function TokenStream({ seedData, paused = false, stepFrame = 0 }: TokenStreamProps) {
   const [stream, setStream] = useState<string>('');
-  const [tokens, setTokens] = useState<string[]>([]);
+  const tokensRef = useRef<string[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const idxRef = useRef(0);
   const streamRef = useRef('');
+  const historyRef = useRef<Snapshot[]>([]);
+  const lastFrameRef = useRef(0);
 
   useEffect(() => {
-    const prng = derivePrng(seedData, PanelSlot.TokenStream);
+    const prng: SeededPrng = derivePrng(seedData, PanelSlot.TokenStream);
     const newTokens: string[] = [];
-    for (let i = 0; i < 80; i++) {
-      newTokens.push(generateCharGrams(seedData.input, prng));
-    }
-    setTokens(newTokens);
+    for (let i = 0; i < 80; i++) newTokens.push(generateCharGrams(seedData.input, prng));
+    tokensRef.current = newTokens;
     setStream('');
     streamRef.current = '';
     idxRef.current = 0;
+    historyRef.current = [];
+    lastFrameRef.current = 0;
   }, [seedData]);
 
-  const tick = () => {
+  const tickOnce = () => {
+    const tokens = tokensRef.current;
     if (tokens.length === 0) return;
     let s = streamRef.current + tokens[idxRef.current] + ' ';
     if (s.length > MAX_LEN) {
@@ -47,14 +55,30 @@ export function TokenStream({ seedData, paused = false, stepFrame = 0 }: TokenSt
   };
 
   useEffect(() => {
-    if (paused || tokens.length === 0) return;
-    const interval = setInterval(tick, 120);
+    if (paused || tokensRef.current.length === 0) return;
+    const interval = setInterval(tickOnce, 120);
     return () => clearInterval(interval);
-  }, [tokens, paused]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedData, paused]);
 
   useEffect(() => {
-    if (!paused || stepFrame === 0 || tokens.length === 0) return;
-    tick();
+    if (!paused || tokensRef.current.length === 0) return;
+    const delta = stepFrame - lastFrameRef.current;
+    if (delta > 0) {
+      for (let i = 0; i < delta; i++) {
+        historyRef.current.push({ stream: streamRef.current, idx: idxRef.current });
+        tickOnce();
+      }
+    } else if (delta < 0) {
+      let snap: Snapshot | undefined;
+      for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
+      if (snap) {
+        streamRef.current = snap.stream;
+        idxRef.current = snap.idx;
+        setStream(snap.stream);
+      }
+    }
+    lastFrameRef.current = stepFrame;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepFrame, paused]);
 

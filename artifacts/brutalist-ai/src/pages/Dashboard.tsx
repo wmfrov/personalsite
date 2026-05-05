@@ -24,12 +24,13 @@ export default function Dashboard() {
   const [exportState, setExportState] = useState<ExportState>({ active: false, w: 0, h: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Global frame step counter — incremented by ArrowRight in export mode so
-  // every animated panel advances exactly one tick per press. ArrowLeft
-  // rewinds to frame 0 and bumps `resetKey` to remount panels (true reverse
-  // stepping would require frame-by-frame state history; rewind-to-start is
-  // a clean, deterministic alternative).
+  // Global frame step counter for export mode. Each panel watches it and
+  // applies the delta against its own snapshot history: positive delta ticks
+  // forward (snapshotting prior state + PRNG), negative delta pops snapshots
+  // and restores. This gives true bidirectional frame stepping where
+  // forward → back → forward returns to the exact same state.
   const [stepFrame, setStepFrame] = useState(0);
+  // Bumped on entering export mode to force panel remount + history reset.
   const [resetKey, setResetKey] = useState(0);
 
   const dashboardRef = useRef<HTMLDivElement>(null);
@@ -83,8 +84,7 @@ export default function Dashboard() {
         }
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
-          setStepFrame(0);
-          setResetKey(k => k + 1);
+          setStepFrame(f => Math.max(0, f - 1));
           return;
         }
         if (e.key === 'ArrowDown') {
@@ -176,7 +176,7 @@ export default function Dashboard() {
             >
               <span>Exporting: {exportState.w} × {exportState.h} · frame {stepFrame}</span>
               <div className="flex items-center gap-3">
-                <span className="text-xs">← Rewind | → Step | ESC Exit</span>
+                <span className="text-xs">← Step Back | → Step Forward | ESC Exit</span>
                 <button
                   onClick={downloadImage}
                   className="bg-ink text-cream px-3 py-1 text-sm font-bold border-[3px] border-ink shadow-[4px_4px_0_0_#000] hover:bg-ph-red hover:text-cream transition-colors duration-0"
