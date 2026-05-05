@@ -4,9 +4,11 @@ import { SeedData, derivePrng } from '../lib/hash';
 interface WeightsProps {
   seedData: SeedData;
   paused?: boolean;
+  /** Increments by 1 per arrow press in export mode; advances one tick. */
+  stepFrame?: number;
 }
 
-export function Weights({ seedData, paused = false }: WeightsProps) {
+export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProps) {
   const [weights, setWeights] = useState<string[]>([]);
   const flickerPrngRef = useRef<() => number>(() => 0);
 
@@ -20,21 +22,30 @@ export function Weights({ seedData, paused = false }: WeightsProps) {
     setWeights(initialWeights);
   }, [seedData]);
 
+  const tick = () => {
+    const prng = flickerPrngRef.current;
+    setWeights(prev => {
+      if (prev.length === 0) return prev;
+      const next = [...prev];
+      const idx = Math.floor(prng() * next.length);
+      next[idx] = formatWeight(prng);
+      return next;
+    });
+  };
+
+  // Live mode: timer-driven flicker.
   useEffect(() => {
     if (paused || weights.length === 0) return;
-
-    const interval = setInterval(() => {
-      const prng = flickerPrngRef.current;
-      setWeights(prev => {
-        const next = [...prev];
-        const idx = Math.floor(prng() * next.length);
-        next[idx] = formatWeight(prng);
-        return next;
-      });
-    }, 400);
-
+    const interval = setInterval(tick, 400);
     return () => clearInterval(interval);
   }, [seedData, paused, weights.length]);
+
+  // Paused mode: arrow-key driven step.
+  useEffect(() => {
+    if (!paused || stepFrame === 0 || weights.length === 0) return;
+    tick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepFrame, paused]);
 
   return (
     <div className="brutalist-panel h-full flex flex-col min-h-0">

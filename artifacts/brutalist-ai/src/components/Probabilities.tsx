@@ -4,6 +4,7 @@ import { SeedData, derivePrng } from '../lib/hash';
 interface ProbabilitiesProps {
   seedData: SeedData;
   paused?: boolean;
+  stepFrame?: number;
 }
 
 interface ProbBar {
@@ -14,7 +15,7 @@ interface ProbBar {
 
 const FAKE_LABELS = ['P(refactor)', 'P(ship)', 'P(revert)', 'P(debug)', 'P(coffee)', 'P(build)', 'P(deploy)', 'P(panic)'];
 
-export function Probabilities({ seedData, paused = false }: ProbabilitiesProps) {
+export function Probabilities({ seedData, paused = false, stepFrame = 0 }: ProbabilitiesProps) {
   const [bars, setBars] = useState<ProbBar[]>([]);
   const jitterPrngRef = useRef<() => number>(() => 0);
 
@@ -23,7 +24,6 @@ export function Probabilities({ seedData, paused = false }: ProbabilitiesProps) 
     jitterPrngRef.current = derivePrng(seedData.seedInt, 31);
     const newBars: ProbBar[] = [];
 
-    // Pick 5 labels deterministically (Fisher–Yates with seeded prng)
     const pool = [...FAKE_LABELS];
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(initPrng() * (i + 1));
@@ -33,37 +33,37 @@ export function Probabilities({ seedData, paused = false }: ProbabilitiesProps) 
 
     for (let i = 0; i < 5; i++) {
       const val = initPrng();
-      newBars.push({
-        label: labels[i],
-        value: val,
-        target: val,
-      });
+      newBars.push({ label: labels[i], value: val, target: val });
     }
 
     setBars(newBars);
   }, [seedData]);
 
+  const tick = () => {
+    const prng = jitterPrngRef.current;
+    setBars(prev => {
+      if (prev.length === 0) return prev;
+      const next = [...prev];
+      const numJitter = prng() > 0.5 ? 2 : 1;
+      for (let i = 0; i < numJitter; i++) {
+        const idx = Math.floor(prng() * next.length);
+        next[idx] = { ...next[idx], target: prng() };
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (paused || bars.length === 0) return;
-
-    const interval = setInterval(() => {
-      const prng = jitterPrngRef.current;
-      setBars(prev => {
-        const next = [...prev];
-        const numJitter = prng() > 0.5 ? 2 : 1;
-        for (let i = 0; i < numJitter; i++) {
-          const idx = Math.floor(prng() * next.length);
-          next[idx] = {
-            ...next[idx],
-            target: prng(),
-          };
-        }
-        return next;
-      });
-    }, 500);
-
+    const interval = setInterval(tick, 500);
     return () => clearInterval(interval);
   }, [bars.length, paused]);
+
+  useEffect(() => {
+    if (!paused || stepFrame === 0 || bars.length === 0) return;
+    tick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepFrame, paused]);
 
   return (
     <div className="brutalist-panel h-full flex flex-col min-h-0">
@@ -75,9 +75,7 @@ export function Probabilities({ seedData, paused = false }: ProbabilitiesProps) 
               <span className="font-bold">{bar.label}</span>
               <span>{(bar.target * 100).toFixed(1)}%</span>
             </div>
-            <div className="flex">
-              {renderBar(bar.target)}
-            </div>
+            <div className="flex">{renderBar(bar.target)}</div>
           </div>
         ))}
       </div>

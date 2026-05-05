@@ -5,6 +5,8 @@ import { generateEmbeddingTokens } from '../lib/tokens';
 interface EmbeddingSpaceProps {
   seedData: SeedData;
   paused?: boolean;
+  /** Increments by 1 per arrow press in export mode; advances one physics step. */
+  stepFrame?: number;
 }
 
 interface Dot {
@@ -22,7 +24,7 @@ interface Dot {
   vy: number;
 }
 
-export function EmbeddingSpace({ seedData, paused = false }: EmbeddingSpaceProps) {
+export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: EmbeddingSpaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dots, setDots] = useState<Dot[]>([]);
   const [hoveredDotId, setHoveredDotId] = useState<number | null>(null);
@@ -84,102 +86,88 @@ export function EmbeddingSpace({ seedData, paused = false }: EmbeddingSpaceProps
     dotsRef.current = newDots;
   }, [seedData]);
   
-  // Animation loop
+  // Single physics step. dt is in ms; pass ~16 for one frame's worth.
+  const snapTimerRef = useRef(0);
+  const stepPhysics = (dt: number) => {
+    snapTimerRef.current += dt;
+    if (snapTimerRef.current > 3000) {
+      snapTimerRef.current = 0;
+      const ap = animPrngRef.current;
+      if (ap() > 0.5 && dotsRef.current.length > 1) {
+        const idx = 1 + Math.floor(ap() * (dotsRef.current.length - 1));
+        if (dotsRef.current[idx]) {
+          dotsRef.current[idx].baseX = ap();
+          dotsRef.current[idx].baseY = ap();
+          dotsRef.current[idx].x = dotsRef.current[idx].baseX;
+          dotsRef.current[idx].y = dotsRef.current[idx].baseY;
+          dotsRef.current[idx].targetX = dotsRef.current[idx].baseX;
+          dotsRef.current[idx].targetY = dotsRef.current[idx].baseY;
+        }
+      }
+    }
+
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const mouseActive = mouseRef.current.active;
+
+    const newDots = [...dotsRef.current];
+
+    for (let i = 0; i < newDots.length; i++) {
+      const dot = newDots[i];
+
+      if (mouseActive) {
+        const mx = (mouseRef.current.x - rect.left) / rect.width;
+        const my = (mouseRef.current.y - rect.top) / rect.height;
+        const dx = mx - dot.baseX;
+        const dy = my - dot.baseY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const pull = Math.max(0, 1 - dist * 2);
+        dot.targetX = dot.baseX + dx * pull * 0.2;
+        dot.targetY = dot.baseY + dy * pull * 0.2;
+      } else {
+        dot.targetX = dot.baseX;
+        dot.targetY = dot.baseY;
+        dot.baseX += dot.vx;
+        dot.baseY += dot.vy;
+        if (dot.baseX < 0 || dot.baseX > 1) dot.vx *= -1;
+        if (dot.baseY < 0 || dot.baseY > 1) dot.vy *= -1;
+        dot.baseX = Math.max(0, Math.min(1, dot.baseX));
+        dot.baseY = Math.max(0, Math.min(1, dot.baseY));
+      }
+
+      dot.x += (dot.targetX - dot.x) * dot.lag;
+      dot.y += (dot.targetY - dot.y) * dot.lag;
+    }
+
+    dotsRef.current = newDots;
+    setDots(newDots);
+  };
+
+  // Live mode: requestAnimationFrame loop.
   useEffect(() => {
+    if (paused) return;
     let animationFrameId: number;
     let lastTime = performance.now();
-    let snapTimer = 0;
-    
+
     const animate = (time: number) => {
-      if (paused) {
-        animationFrameId = requestAnimationFrame(animate);
-        return;
-      }
-      
       const dt = time - lastTime;
       lastTime = time;
-      
-      // Handle deterministic snap jumps
-      snapTimer += dt;
-      if (snapTimer > 3000) {
-        snapTimer = 0;
-        const ap = animPrngRef.current;
-        if (ap() > 0.5 && dotsRef.current.length > 1) {
-          // Pick non-you dot deterministically
-          const idx = 1 + Math.floor(ap() * (dotsRef.current.length - 1));
-          if (dotsRef.current[idx]) {
-            dotsRef.current[idx].baseX = ap();
-            dotsRef.current[idx].baseY = ap();
-            dotsRef.current[idx].x = dotsRef.current[idx].baseX;
-            dotsRef.current[idx].y = dotsRef.current[idx].baseY;
-            dotsRef.current[idx].targetX = dotsRef.current[idx].baseX;
-            dotsRef.current[idx].targetY = dotsRef.current[idx].baseY;
-          }
-        }
-      }
-      
-      const container = containerRef.current;
-      if (!container) return;
-      
-      const rect = container.getBoundingClientRect();
-      const mouseActive = mouseRef.current.active;
-      
-      const newDots = [...dotsRef.current];
-      
-      for (let i = 0; i < newDots.length; i++) {
-        const dot = newDots[i];
-        
-        if (mouseActive) {
-          // Calculate mouse pos relative to container in 0-1 coords
-          const mx = (mouseRef.current.x - rect.left) / rect.width;
-          const my = (mouseRef.current.y - rect.top) / rect.height;
-          
-          // Spring toward mouse slightly
-          const dx = mx - dot.baseX;
-          const dy = my - dot.baseY;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          
-          // Spring force depends on distance, closer = more pull
-          const pull = Math.max(0, 1 - dist * 2); 
-          
-          dot.targetX = dot.baseX + dx * pull * 0.2;
-          dot.targetY = dot.baseY + dy * pull * 0.2;
-          
-        } else {
-          // Drift mode
-          dot.targetX = dot.baseX;
-          dot.targetY = dot.baseY;
-          
-          // Update drift base
-          dot.baseX += dot.vx;
-          dot.baseY += dot.vy;
-          
-          // Bounce off walls
-          if (dot.baseX < 0 || dot.baseX > 1) dot.vx *= -1;
-          if (dot.baseY < 0 || dot.baseY > 1) dot.vy *= -1;
-          
-          // Clamp
-          dot.baseX = Math.max(0, Math.min(1, dot.baseX));
-          dot.baseY = Math.max(0, Math.min(1, dot.baseY));
-        }
-        
-        // Lerp position
-        dot.x += (dot.targetX - dot.x) * dot.lag;
-        dot.y += (dot.targetY - dot.y) * dot.lag;
-      }
-      
-      dotsRef.current = newDots;
-      setDots(newDots);
-      
+      stepPhysics(dt);
       animationFrameId = requestAnimationFrame(animate);
     };
-    
+
     animationFrameId = requestAnimationFrame(animate);
-    
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-    };
+    return () => cancelAnimationFrame(animationFrameId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused]);
+
+  // Paused mode: each arrow press advances one frame (~16ms) of physics.
+  useEffect(() => {
+    if (!paused || stepFrame === 0) return;
+    stepPhysics(16);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepFrame, paused]);
   
   // Mouse event handlers
   const handleMouseMove = (e: React.MouseEvent) => {

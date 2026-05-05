@@ -4,18 +4,20 @@ import { SeedData, derivePrng } from '../lib/hash';
 interface LossProps {
   seedData: SeedData;
   paused?: boolean;
+  stepFrame?: number;
 }
 
 const BLOCKS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
 
-export function Loss({ seedData, paused = false }: LossProps) {
+export function Loss({ seedData, paused = false, stepFrame = 0 }: LossProps) {
   const [curve, setCurve] = useState<string>('');
   const animPrngRef = useRef<() => number>(() => 0);
+  const levelRef = useRef(BLOCKS.length - 1);
 
   useEffect(() => {
     const initPrng = derivePrng(seedData.seedInt, 20);
     animPrngRef.current = derivePrng(seedData.seedInt, 21);
-    let currentLevel = BLOCKS.length - 1; // Start high
+    let currentLevel = BLOCKS.length - 1;
     let initialCurve = '';
 
     for (let i = 0; i < 40; i++) {
@@ -27,32 +29,36 @@ export function Loss({ seedData, paused = false }: LossProps) {
       initialCurve += BLOCKS[currentLevel];
     }
 
+    levelRef.current = currentLevel;
     setCurve(initialCurve);
   }, [seedData]);
 
+  const tick = () => {
+    const prng = animPrngRef.current;
+    setCurve(prev => {
+      if (!prev) return prev;
+      let nextLevel = levelRef.current;
+      if (prng() < 0.1) {
+        nextLevel = Math.min(BLOCKS.length - 1, nextLevel + 3);
+      } else if (prng() < 0.4) {
+        nextLevel = Math.max(0, nextLevel - 1);
+      }
+      levelRef.current = nextLevel;
+      return prev.substring(1) + BLOCKS[nextLevel];
+    });
+  };
+
   useEffect(() => {
     if (paused || !curve) return;
-
-    let currentLevel = BLOCKS.indexOf(curve[curve.length - 1]);
-    if (currentLevel === -1) currentLevel = 0;
-
-    const interval = setInterval(() => {
-      const prng = animPrngRef.current;
-      setCurve(prev => {
-        let nextLevel = currentLevel;
-        if (prng() < 0.1) {
-          nextLevel = Math.min(BLOCKS.length - 1, nextLevel + 3);
-        } else if (prng() < 0.4) {
-          nextLevel = Math.max(0, nextLevel - 1);
-        }
-        currentLevel = nextLevel;
-
-        return prev.substring(1) + BLOCKS[nextLevel];
-      });
-    }, 300);
-
+    const interval = setInterval(tick, 300);
     return () => clearInterval(interval);
   }, [curve, paused]);
+
+  useEffect(() => {
+    if (!paused || stepFrame === 0 || !curve) return;
+    tick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepFrame, paused]);
 
   return (
     <div className="brutalist-panel h-full flex flex-col min-h-0">

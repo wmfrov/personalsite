@@ -5,14 +5,17 @@ import { generateCharGrams } from '../lib/tokens';
 interface TokenStreamProps {
   seedData: SeedData;
   paused?: boolean;
+  stepFrame?: number;
 }
 
 const MAX_LEN = 220;
 
-export function TokenStream({ seedData, paused = false }: TokenStreamProps) {
+export function TokenStream({ seedData, paused = false, stepFrame = 0 }: TokenStreamProps) {
   const [stream, setStream] = useState<string>('');
   const [tokens, setTokens] = useState<string[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
+  const idxRef = useRef(0);
+  const streamRef = useRef('');
 
   useEffect(() => {
     const prng = derivePrng(seedData.seedInt, 40);
@@ -22,37 +25,38 @@ export function TokenStream({ seedData, paused = false }: TokenStreamProps) {
     }
     setTokens(newTokens);
     setStream('');
+    streamRef.current = '';
+    idxRef.current = 0;
   }, [seedData]);
+
+  const tick = () => {
+    if (tokens.length === 0) return;
+    let s = streamRef.current + tokens[idxRef.current] + ' ';
+    if (s.length > MAX_LEN) {
+      const overflow = s.length - MAX_LEN;
+      const cutAt = s.indexOf(' ', overflow);
+      s = cutAt === -1 ? s.slice(overflow) : s.slice(cutAt + 1);
+    }
+    streamRef.current = s;
+    setStream(s);
+    idxRef.current = (idxRef.current + 1) % tokens.length;
+
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  };
 
   useEffect(() => {
     if (paused || tokens.length === 0) return;
-
-    let currentIdx = 0;
-    let currentStream = '';
-
-    const interval = setInterval(() => {
-      currentStream += tokens[currentIdx] + ' ';
-
-      // Sliding window: drop tokens off the front so the stream loops
-      // seamlessly without a visible reset.
-      if (currentStream.length > MAX_LEN) {
-        const overflow = currentStream.length - MAX_LEN;
-        const cutAt = currentStream.indexOf(' ', overflow);
-        currentStream =
-          cutAt === -1 ? currentStream.slice(overflow) : currentStream.slice(cutAt + 1);
-      }
-
-      setStream(currentStream);
-
-      currentIdx = (currentIdx + 1) % tokens.length;
-
-      if (containerRef.current) {
-        containerRef.current.scrollTop = containerRef.current.scrollHeight;
-      }
-    }, 120);
-
+    const interval = setInterval(tick, 120);
     return () => clearInterval(interval);
   }, [tokens, paused]);
+
+  useEffect(() => {
+    if (!paused || stepFrame === 0 || tokens.length === 0) return;
+    tick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepFrame, paused]);
 
   return (
     <div className="brutalist-panel h-full flex flex-col min-h-0">
