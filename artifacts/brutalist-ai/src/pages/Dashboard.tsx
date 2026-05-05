@@ -35,10 +35,16 @@ export default function Dashboard() {
 
   const dashboardRef = useRef<HTMLDivElement>(null);
 
-  // Init seed from URL hash if present
+  // Init seed from URL hash if present. Wrap decode in try/catch so a
+  // malformed `%XX` sequence in the URL bar can't crash the app.
   useEffect(() => {
-    const hash = window.location.hash.slice(1);
-    if (hash) setSeed(decodeURIComponent(hash));
+    const raw = window.location.hash.slice(1);
+    if (!raw) return;
+    try {
+      setSeed(decodeURIComponent(raw));
+    } catch {
+      setSeed(raw);
+    }
   }, []);
 
   // Rehash when seed changes (committed via Enter / blur, not per keystroke).
