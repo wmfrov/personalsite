@@ -1,0 +1,129 @@
+AI × PostHog Brutalist Dashboard — Project Plan
+What you're building
+A single-page web app that renders a brutalist "AI processing" dashboard — cream background, thick black borders, IBM Plex Mono, PostHog accent colors — populated with an embedding-drift centerpiece, floating weights, token streams, and loss curves that all derive deterministically from a hash of your input.
+Optimized for two outputs: a clean looping meeting / screen-recording background, and exportable still frames sized as LinkedIn / Twitter banners.
+The hook: every visual is yours. Type your name or paste a URL → SHA-256 hash → the hash seeds every position, color, value, and label on screen. Same input produces the same visual every time. Your cursor adds live transient motion on top of the deterministic base.
+Why this combination is fresh
+
+PostHog brutalism has hard edges, snap motion, deliberate composition — the visual antithesis of generic AI glow.
+AI-aesthetic ingredients (embeddings, weights, tokens) carry the "this is about ML" signal without dark mode neon.
+Almost nobody is mashing these. Most AI visuals are dark-mode + bloom; most brutalist sites are static.
+The hash hook gives the visual identity: this banner is yours specifically. The cursor adds liveness for live recording. They're complementary, not competing.
+
+Core concept: embedding drift centerpiece
+The screen is dominated by one large panel labeled EMBEDDING SPACE with thick black borders. Inside: ~40 labeled dots scattered in 2D, each labeled with a fake token. One dot is highlighted in PostHog red, slightly larger, labeled with the user's input string — that's "you" in this fake embedding space.
+Behavior:
+
+All dots drift slowly in pseudo-random directions, seeded from the hash so the drift is reproducible.
+Occasionally a dot snap-jumps to a new position. Snap, not tween. PostHog energy means hard cuts, not smooth eases.
+Faint axis ticks at the panel edges.
+Cursor interaction: when the cursor enters the panel, all dots spring toward it with slight lag and tiny overshoot. When the cursor leaves, they return to drift.
+Hovering a specific dot draws thick black lines to its 3 nearest neighbors and enlarges their labels.
+
+This is the centerpiece. ~60% of the screen real estate. The rest is supporting panels.
+Surrounding panels
+Four smaller panels around the centerpiece, each with thick borders and a small caps label like a cassette tape:
+
+WEIGHTS — column of ~12 floats (+0.7421, -0.0183, +1.04e-3). Occasionally one flickers to a new value. Seeded.
+TOKEN STREAM — fake LLM output streaming token-by-token with a blinking caret. Tokens drawn from char-grams of the user's input where possible, otherwise from a default bag.
+LOSS — descending squiggle drawn from ▁▂▃▄▅▆▇ block characters. Slowly steps down, occasional spikes.
+PROBABILITIES — 5 horizontal bars made from █ and ░ chars, jittering to new lengths every ~500ms.
+
+Plus a small header strip: SEED: followed by truncated hash (a4f9c2…) and the input field where the user changes the seed.
+Hash → visual pipeline
+
+User types or pastes a string. Default: hello world.
+crypto.subtle.digest('SHA-256', ...) produces 64 hex chars. Built-in browser API, no dependency.
+Slice the hash:
+
+First 8 chars → integer seed for a Mulberry32 PRNG (~6 lines of JS, copy from any seedable-PRNG gist).
+Next 2 chars → which accent dominates: PostHog red #f54e00, blue #1d4aff, or yellow #f9bd2b.
+Next 4 chars → position of "you" in embedding space.
+Remainder → fed into the PRNG for all subsequent randomness (dot positions, weight values, token shuffling, etc.).
+
+
+Same input → same visual. Period. This is what makes banners shareable.
+Encode current seed in window.location.hash so visuals have permalink URLs.
+
+Cursor motion is not seeded. It's transient and live, layered on top.
+Two output modes
+Loop / screen-recording mode (default)
+
+Full viewport. Dashboard fills the screen.
+All animations loop indefinitely without visible resets (stagger animation delays so nothing pulses in unison).
+f → real fullscreen via requestFullscreen().
+h → hide seed input and chrome. Cursor effects still work.
+Meant for: leave running during a meeting, screen-record with QuickTime / OBS.
+
+Banner export mode
+
+A button: EXPORT BANNER. Opens a modal with size presets:
+
+LinkedIn cover: 1584 × 396
+X / Twitter header: 1500 × 500
+Custom: width × height
+
+
+Resizes the dashboard container to exact pixel dimensions, freezes animations on a frame the user picks (arrow keys to step frames).
+Capture, simplest first:
+
+v1: OS screenshot. Zero dependencies. The container is sized exactly right so the user just screenshots it.
+v1.5: add html-to-image (~30KB). One-click PNG download.
+
+
+Optional: small print in a banner corner with the seed string so others can recreate it.
+
+Tech specifics
+
+Vanilla HTML / CSS / JS. One optional dep (html-to-image), only at v1.5.
+Animations: CSS keyframes. JS only for lifecycle (spawn/despawn) and seeded value generation.
+Cursor interaction: one mousemove listener on the embedding panel, sets --mx / --my CSS vars on the panel; each dot reads those plus its own --lag constant for the staggered spring feel.
+Snap motion: cubic-bezier(0.85, 0, 0.15, 1), durations 80–160ms.
+No rounded corners. Anywhere. Ever.
+IBM Plex Mono via Google Fonts.
+
+Visual design rules
+
+Background: #eeefe9 cream.
+Borders: 3px solid #000. Always 3px, always pure black.
+Text: pure #000 for body. Accents only for highlights and the "you" dot.
+Drop shadows: hard offset only (4px 4px 0 #000), never blurred. Sticker energy.
+Panel labels: small caps in a black bar with cream text — looks like a cassette label.
+One small PostHog-style sticker / // note: comment in a corner, restrained.
+
+File structure
+index.html
+style.css       # all brutalist styling + keyframes
+hash.js         # SHA-256 wrapper + Mulberry32 PRNG + seed slicing
+panels.js       # one function per panel
+interaction.js  # cursor, fullscreen, export, keyboard shortcuts
+main.js         # init, seed input, wires it all together
+Build order
+
+Skeleton + style — index.html, cream bg, IBM Plex Mono, three empty thick-bordered panels. The empty version should already feel like the right thing.
+Hash pipeline — seed input, SHA-256, Mulberry32, log derived values. No visuals yet.
+Embedding panel — seeded dots, drift, "you" highlight. Get this looking great before anything else.
+Cursor interaction on the embedding panel — iterate on springiness and lag until it feels alive but controlled.
+Surrounding panels — weights, tokens, loss, probabilities. All pull from the same PRNG.
+Modes — fullscreen, hide-UI, banner export with size presets.
+Polish — URL hash for sharing, keyboard shortcuts, the optional corner sticker.
+
+What "done" looks like
+
+You type your name. The dashboard rearranges into your unique seeded look.
+You wave the mouse. Dots swarm slightly toward it; the rest of the dashboard keeps churning deterministically.
+You press h then f. Clean fullscreen, no UI. Start screen recording. Ten-minute brutalist AI meeting background ready.
+Or: click EXPORT BANNER, pick LinkedIn cover, screenshot. Your unique brutalist AI banner, deterministically tied to your name, with a tiny seed in the corner so others can rebuild it.
+
+Replit setup
+
+Use the HTML, CSS, JS static template.
+No package.json needed for v1.
+Add html-to-image via CDN <script> tag if/when you want one-click PNG export.
+
+Stretch
+
+The seed string itself appears as a labeled token in the embedding cloud — your name is literally a vector among other tokens.
+Live preview thumbnail next to the seed input so you can browse seeds.
+A "shuffle" button that randomizes the seed when you can't think of one.
+Server-rendered PNG endpoint for paste-a-URL-get-a-banner (won't fit on Replit static, save for later).
