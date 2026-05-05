@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { generateEmbeddingTokens } from '../lib/tokens';
+import { SNAP_DURATION_MS, SNAP_EASING } from '../lib/motion';
+
+// Spring damping that approximates `${SNAP_EASING}` settling over ~SNAP_DURATION_MS:
+// after a snap-jump teleports `baseX/baseY`, the per-frame spring (stiffness=lag*1.4,
+// damping=0.62) overshoots then resolves on roughly that ease curve / time budget.
+const SPRING_DAMPING = 0.62;
 
 interface EmbeddingSpaceProps {
   seedData: SeedData;
@@ -150,11 +156,10 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
         dot.baseY = Math.max(0, Math.min(1, dot.baseY));
       }
 
-      // Spring + damping for cursor-attract overshoot.
+      // Spring + damping (~SNAP_EASING over ~SNAP_DURATION_MS) for cursor-attract overshoot.
       const stiffness = dot.lag * 1.4;
-      const damping = 0.62;
-      dot.svx = dot.svx * damping + (dot.targetX - dot.x) * stiffness;
-      dot.svy = dot.svy * damping + (dot.targetY - dot.y) * stiffness;
+      dot.svx = dot.svx * SPRING_DAMPING + (dot.targetX - dot.x) * stiffness;
+      dot.svy = dot.svy * SPRING_DAMPING + (dot.targetY - dot.y) * stiffness;
       dot.x += dot.svx;
       dot.y += dot.svy;
     }
