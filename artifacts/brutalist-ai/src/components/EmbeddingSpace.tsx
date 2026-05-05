@@ -116,6 +116,10 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
       if (ap && ap() > 0.5 && dotsRef.current.length > 1) {
         const idx = 1 + Math.floor(ap() * (dotsRef.current.length - 1));
         if (dotsRef.current[idx]) {
+          // Intentional hard-cut teleport: brutalist snap-jump is a single-
+          // frame relocation by spec (the SNAP_EASING/SNAP_DURATION_MS tokens
+          // describe cursor-attract resolution, not this teleport). The spring
+          // above will then catch the new position smoothly.
           dotsRef.current[idx].baseX = ap();
           dotsRef.current[idx].baseY = ap();
           dotsRef.current[idx].x = dotsRef.current[idx].baseX;
