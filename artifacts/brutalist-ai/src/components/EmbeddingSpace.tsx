@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
 import { generateEmbeddingTokens } from '../lib/tokens';
@@ -84,6 +84,96 @@ function gaussian(prng: SeededPrng): number {
   const u = Math.max(1e-9, prng());
   const v = prng();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// Connection-layer types and pure helpers. Exported only at module scope so
+// they participate in cheap useMemo caching keyed on a quantized position
+// snapshot (positions hashed to 1e-3, see `posKey` in EmbeddingSpace).
+type ProxEdge = { x1: number; y1: number; x2: number; y2: number; dist: number };
+type KnnEdge = { x1: number; y1: number; x2: number; y2: number; cluster: number };
+type AttnEdge = { x1: number; y1: number; x2: number; y2: number; weight: number; targetId: number };
+
+function computeProxEdges(dots: Dot[]): ProxEdge[] {
+  const out: ProxEdge[] = [];
+  for (let i = 0; i < dots.length; i++) {
+    const di = dots[i];
+    for (let j = i + 1; j < dots.length; j++) {
+      const dj = dots[j];
+      const dx = dj.x - di.x;
+      const dy = dj.y - di.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d <= PROX_RADIUS) {
+        out.push({ x1: di.x, y1: di.y, x2: dj.x, y2: dj.y, dist: d });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Undirected k-nearest-neighbor edges, deduped by ordered index pair.
+ * `sameClusterOnly=true` keeps only edges between dots that share a cluster
+ * (FOG mode — produces the colored cluster web that mirrors the canvas
+ * mockup). `false` keeps every k-NN edge for use as a quiet ink underlay
+ * in ATTN mode.
+ */
+function computeKnnEdges(dots: Dot[], sameClusterOnly: boolean): KnnEdge[] {
+  const out: KnnEdge[] = [];
+  if (dots.length === 0) return out;
+  const seen = new Set<number>();
+  const stride = dots.length;
+  for (let i = 0; i < dots.length; i++) {
+    const di = dots[i];
+    const cands: { idx: number; dist: number }[] = [];
+    for (let j = 0; j < dots.length; j++) {
+      if (j === i) continue;
+      const dj = dots[j];
+      const dx = dj.x - di.x;
+      const dy = dj.y - di.y;
+      cands.push({ idx: j, dist: Math.sqrt(dx * dx + dy * dy) });
+    }
+    cands.sort((a, b) => a.dist - b.dist);
+    for (let k = 0; k < Math.min(K_NN, cands.length); k++) {
+      const n = cands[k];
+      const a = i < n.idx ? i : n.idx;
+      const b = i < n.idx ? n.idx : i;
+      const key = a * stride + b;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const dn = dots[n.idx];
+      if (sameClusterOnly && di.cluster !== dn.cluster) continue;
+      out.push({ x1: di.x, y1: di.y, x2: dn.x, y2: dn.y, cluster: di.cluster });
+    }
+  }
+  return out;
+}
+
+/**
+ * Top-K attention edges from the "you" dot, weighted by softmax(-dist/τ).
+ * Returns [] if no "you" dot is present (e.g. before initial dot population).
+ */
+function computeAttnEdges(dots: Dot[]): AttnEdge[] {
+  const you = dots.find(d => d.isYou);
+  if (!you) return [];
+  const others = dots
+    .filter(d => !d.isYou)
+    .map(d => {
+      const dx = d.x - you.x;
+      const dy = d.y - you.y;
+      return { id: d.id, x: d.x, y: d.y, dist: Math.sqrt(dx * dx + dy * dy) };
+    })
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, ATTN_TOP_K);
+  const scores = others.map(o => Math.exp(-o.dist / ATTN_TEMPERATURE));
+  const sum = scores.reduce((a, b) => a + b, 0) || 1;
+  return others.map((o, i) => ({
+    x1: you.x,
+    y1: you.y,
+    x2: o.x,
+    y2: o.y,
+    weight: scores[i] / sum,
+    targetId: o.id,
+  }));
 }
 
 export function EmbeddingSpace({
@@ -382,94 +472,43 @@ export function EmbeddingSpace({
     return palette.accent3;
   };
 
-  // Compute the connection layer fresh each render so edges follow the live
-  // drift physics. With NUM_DOTS=120 the all-pairs proximity scan is ~7,140
-  // distance computations, and k-NN per dot is ~120*119 sort entries — both
-  // comfortably under a 16ms frame budget. Everything derives from current
-  // dot.x/dot.y (no time-based randomness), so paused/export stepping stays
-  // byte-identical for a given mode.
-  type ProxEdge = { x1: number; y1: number; x2: number; y2: number; dist: number };
-  type KnnEdge = { x1: number; y1: number; x2: number; y2: number; cluster: number };
-  type AttnEdge = { x1: number; y1: number; x2: number; y2: number; weight: number; targetId: number };
-
-  const proxEdges: ProxEdge[] = [];
-  const knnEdges: KnnEdge[] = [];
-  const attnEdges: AttnEdge[] = [];
-
-  if (dots.length > 0) {
-    if (mode === 'fog') {
-      for (let i = 0; i < dots.length; i++) {
-        const di = dots[i];
-        for (let j = i + 1; j < dots.length; j++) {
-          const dj = dots[j];
-          const dx = dj.x - di.x;
-          const dy = dj.y - di.y;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          if (d <= PROX_RADIUS) {
-            proxEdges.push({ x1: di.x, y1: di.y, x2: dj.x, y2: dj.y, dist: d });
-          }
-        }
-      }
+  // Quantize dot positions to 1e-3 to build a stable cache key. During live
+  // drift the key changes nearly every frame (recomputation is required to
+  // follow physics anyway), but during pause/export-stepping the same frame
+  // can re-render multiple times — memoization makes those re-renders free.
+  // Cluster id is folded in so cluster reassignment also invalidates the
+  // cache. Result: edge math derived only from current dot.x/dot.y so
+  // paused/step export rendering remains deterministic per mode.
+  const posKey = useMemo(() => {
+    let s = '';
+    for (const d of dots) {
+      s += ((d.x * 1000) | 0) + ',' + ((d.y * 1000) | 0) + ',' + d.cluster + ';';
     }
+    return s;
+  }, [dots]);
 
-    // k-NN — undirected, deduped. In FOG mode we keep only same-cluster edges
-    // (the colored web mirrors the canvas mockup); in ATTN mode we keep all
-    // k-NN as a quiet ink underlay so the eye still reads the topology.
-    const seen = new Set<number>();
-    for (let i = 0; i < dots.length; i++) {
-      const di = dots[i];
-      const cands: { idx: number; dist: number }[] = [];
-      for (let j = 0; j < dots.length; j++) {
-        if (j === i) continue;
-        const dj = dots[j];
-        const dx = dj.x - di.x;
-        const dy = dj.y - di.y;
-        cands.push({ idx: j, dist: Math.sqrt(dx * dx + dy * dy) });
-      }
-      cands.sort((a, b) => a.dist - b.dist);
-      for (let k = 0; k < Math.min(K_NN, cands.length); k++) {
-        const n = cands[k];
-        const a = i < n.idx ? i : n.idx;
-        const b = i < n.idx ? n.idx : i;
-        const key = a * NUM_DOTS + b;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const dn = dots[n.idx];
-        if (mode === 'fog' && di.cluster !== dn.cluster) continue;
-        knnEdges.push({ x1: di.x, y1: di.y, x2: dn.x, y2: dn.y, cluster: di.cluster });
-      }
-    }
+  const proxEdges = useMemo(
+    () => (mode === 'fog' ? computeProxEdges(dots) : []),
+    // posKey captures dots' material content; recomputation is gated on it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [posKey, mode],
+  );
+  const knnEdges = useMemo(
+    () => computeKnnEdges(dots, mode === 'fog'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [posKey, mode],
+  );
+  const attnEdges = useMemo(
+    () => (mode === 'attn' ? computeAttnEdges(dots) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [posKey, mode],
+  );
 
-    if (mode === 'attn') {
-      const you = dots.find(d => d.isYou);
-      if (you) {
-        const others = dots
-          .filter(d => !d.isYou)
-          .map(d => {
-            const dx = d.x - you.x;
-            const dy = d.y - you.y;
-            return { id: d.id, x: d.x, y: d.y, dist: Math.sqrt(dx * dx + dy * dy) };
-          })
-          .sort((a, b) => a.dist - b.dist)
-          .slice(0, ATTN_TOP_K);
-        const scores = others.map(o => Math.exp(-o.dist / ATTN_TEMPERATURE));
-        const sum = scores.reduce((a, b) => a + b, 0) || 1;
-        others.forEach((o, i) => {
-          attnEdges.push({
-            x1: you.x,
-            y1: you.y,
-            x2: o.x,
-            y2: o.y,
-            weight: scores[i] / sum,
-            targetId: o.id,
-          });
-        });
-      }
-    }
-  }
-
-  const attnWeightById = new Map<number, number>();
-  for (const e of attnEdges) attnWeightById.set(e.targetId, e.weight);
+  const attnWeightById = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const e of attnEdges) m.set(e.targetId, e.weight);
+    return m;
+  }, [attnEdges]);
 
   const now = performance.now();
 
@@ -505,7 +544,9 @@ export function EmbeddingSpace({
                 paddingBottom: 2,
                 background: mode === 'attn' ? palette.bg : 'transparent',
                 color: mode === 'attn' ? palette.ink : palette.bg,
-                border: `1px solid ${palette.bg}`,
+                borderTop: `1px solid ${palette.bg}`,
+                borderRight: `1px solid ${palette.bg}`,
+                borderBottom: `1px solid ${palette.bg}`,
                 borderLeft: 'none',
                 opacity: mode === 'attn' ? 1 : 0.6,
               }}
@@ -733,11 +774,16 @@ export function EmbeddingSpace({
           const attnWeight = attnWeightById.get(dot.id);
           const isAttended = attnWeight !== undefined;
           const dotColor = dot.isYou ? accent : colorForCluster(dot.cluster);
-          const showLabel = dot.pinned || isHovered || isNeighbor || isAttended;
-          // Attended target chips share styling with the "you" chip (accent
-          // background, ink border) so the attention relationship reads at a
-          // glance. Pinned + attended combines into one chip with `· NN%`.
-          const useAccentChip = dot.isYou || isAttended;
+          // The "full" token label chip shows on the same triggers as before
+          // (pinned / hover / NN). Attended-but-otherwise-unmarked dots get a
+          // separate compact %-only badge so the attention info shows without
+          // forcing a token chip on every drifting target.
+          const showFullChip = dot.pinned || isHovered || isNeighbor;
+          // Pinned + attended → one merged accent chip with `· NN%` appended
+          // (matches the canvas mockup behavior for the lucky pinned-target
+          // overlap case). "you" always gets the accent treatment.
+          const useAccentChip = dot.isYou || (showFullChip && isAttended);
+          const showCompactBadge = !showFullChip && isAttended;
 
           return (
             <div
@@ -760,18 +806,33 @@ export function EmbeddingSpace({
                 isYou={dot.isYou}
               />
 
-              {showLabel && (
+              {showFullChip && (
                 <div
                   className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-1 select-none font-mono text-xs font-bold"
                   style={{
                     backgroundColor: useAccentChip ? accent : isHovered || isNeighbor ? palette.ink : palette.bg,
                     color: useAccentChip ? palette.ink : isHovered || isNeighbor ? palette.bg : palette.ink,
-                    transform: isHovered || isNeighbor || isAttended ? 'scale(1.15)' : 'scale(1)',
+                    transform: isHovered || isNeighbor ? 'scale(1.15)' : 'scale(1)',
                     transformOrigin: 'left center',
                     border: useAccentChip ? `2px solid ${palette.ink}` : dot.pinned ? `1px solid ${palette.ink}` : 'none',
                   }}
                 >
                   {dot.label}{isAttended ? ` · ${(attnWeight! * 100).toFixed(0)}%` : ''}
+                </div>
+              )}
+
+              {showCompactBadge && (
+                <div
+                  className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-1 select-none font-mono font-bold"
+                  style={{
+                    fontSize: 10,
+                    lineHeight: 1.1,
+                    backgroundColor: accent,
+                    color: palette.ink,
+                    border: `1.5px solid ${palette.ink}`,
+                  }}
+                >
+                  {(attnWeight! * 100).toFixed(0)}%
                 </div>
               )}
             </div>
