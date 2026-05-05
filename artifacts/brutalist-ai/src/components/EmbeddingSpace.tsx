@@ -334,6 +334,7 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
                 zIndex: dot.isYou ? 30 : isHovered ? 40 : isNeighbor ? 20 : 10
               }}
               onMouseEnter={() => setHoveredDotId(dot.id)}
+              onMouseLeave={() => setHoveredDotId(prev => (prev === dot.id ? null : prev))}
             >
               <div 
                 className="transition-colors duration-0"
