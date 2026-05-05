@@ -10,59 +10,104 @@ interface LossProps {
 }
 
 interface Snapshot {
-  levels: number[];
+  values: number[];
+  valValues: number[];
   level: number;
+  valLevel: number;
+  step: number;
   prngState: number;
 }
 
-const BLOCKS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
-const NUM_BLOCKS = 40;
+const WINDOW = 96;
+// Floating-point analog of the old 0..6 integer level scale, normalized
+// to [0, 1] for plotting. Train and val curves share the same tick
+// engine but with slightly different parameters so they don't overlap.
+const Y_MIN = 0;
+const Y_MAX = 1;
 
 export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossProps) {
-  // Track levels (0..6) per column so we can color-tint each glyph by value.
-  const [levels, setLevels] = useState<number[]>([]);
+  const [values, setValues] = useState<number[]>([]);
+  const [valValues, setValValues] = useState<number[]>([]);
+  const [step, setStep] = useState<number>(0);
   const animPrngRef = useRef<SeededPrng | null>(null);
-  const levelRef = useRef(BLOCKS.length - 1);
+  const levelRef = useRef(1);
+  const valLevelRef = useRef(1);
+  const stepRef = useRef(0);
   const historyRef = useRef<Snapshot[]>([]);
   const lastFrameRef = useRef(0);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
   useEffect(() => {
     const initPrng = derivePrng(seedData, PanelSlot.LossInit);
     animPrngRef.current = derivePrng(seedData, PanelSlot.LossAnim);
     historyRef.current = [];
     lastFrameRef.current = 0;
+    stepRef.current = 0;
 
-    let currentLevel = BLOCKS.length - 1;
-    const initial: number[] = [];
-    for (let i = 0; i < NUM_BLOCKS; i++) {
-      if (initPrng() < 0.1) currentLevel = Math.min(BLOCKS.length - 1, currentLevel + 2);
-      else if (initPrng() < 0.3) currentLevel = Math.max(0, currentLevel - 1);
-      initial.push(currentLevel);
+    let lvl = 0.95;
+    let valLvl = 0.92;
+    const init: number[] = [];
+    const valInit: number[] = [];
+    for (let i = 0; i < WINDOW; i++) {
+      lvl = nextLevel(lvl, initPrng);
+      valLvl = nextValLevel(valLvl, lvl, initPrng);
+      init.push(lvl);
+      valInit.push(valLvl);
     }
-    levelRef.current = currentLevel;
-    setLevels(initial);
+    levelRef.current = lvl;
+    valLevelRef.current = valLvl;
+    setValues(init);
+    setValValues(valInit);
+    setStep(WINDOW);
+    stepRef.current = WINDOW;
   }, [seedData]);
 
-  const tick = (current: number[], level: number, prng: SeededPrng) => {
-    if (current.length === 0) return { levels: current, level };
-    let nextLevel = level;
-    if (prng() < 0.1) nextLevel = Math.min(BLOCKS.length - 1, nextLevel + 3);
-    else if (prng() < 0.4) nextLevel = Math.max(0, nextLevel - 1);
-    return { levels: [...current.slice(1), nextLevel], level: nextLevel };
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) {
+        setSize({ w: e.contentRect.width, h: e.contentRect.height });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const tick = (
+    cur: number[],
+    valCur: number[],
+    lvl: number,
+    valLvl: number,
+    prng: SeededPrng,
+  ) => {
+    const nextLvl = nextLevel(lvl, prng);
+    const nextValLvl = nextValLevel(valLvl, nextLvl, prng);
+    return {
+      values: [...cur.slice(1), nextLvl],
+      valValues: [...valCur.slice(1), nextValLvl],
+      level: nextLvl,
+      valLevel: nextValLvl,
+    };
   };
 
-  // Seeded phase offset to break tick synchrony with other panels.
+  // Live: phase-offset interval to keep panels out of lockstep.
   useEffect(() => {
-    if (paused || levels.length === 0) return;
+    if (paused || values.length === 0) return;
     const prng = animPrngRef.current!;
     const phaseOffset = Math.floor(seedData.panelSeeds[PanelSlot.LossAnim] % 250);
     let cleanup: () => void = () => {};
     const start = setTimeout(() => {
       const interval = setInterval(() => {
-        setLevels(prev => {
-          const r = tick(prev, levelRef.current, prng);
+        setValues(prev => {
+          const r = tick(prev, valValuesRefRead(), levelRef.current, valLevelRef.current, prng);
           levelRef.current = r.level;
-          return r.levels;
+          valLevelRef.current = r.valLevel;
+          setValValues(r.valValues);
+          stepRef.current += 1;
+          setStep(stepRef.current);
+          return r.values;
         });
       }, 300);
       cleanup = () => clearInterval(interval);
@@ -71,23 +116,47 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
       clearTimeout(start);
       cleanup();
     };
-  }, [seedData, levels.length, paused]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedData, values.length, paused]);
+
+  // Closure helper so live tick reads the freshest valValues without
+  // re-subscribing the interval.
+  const valValuesStateRef = useRef<number[]>([]);
+  useEffect(() => {
+    valValuesStateRef.current = valValues;
+  }, [valValues]);
+  const valValuesRefRead = () => valValuesStateRef.current;
 
   useEffect(() => {
-    if (!paused || levels.length === 0 || !animPrngRef.current) return;
+    if (!paused || values.length === 0 || !animPrngRef.current) return;
     const prng = animPrngRef.current;
     const delta = stepFrame - lastFrameRef.current;
     if (delta > 0) {
-      setLevels(prev => {
+      setValues(prev => {
         let s = prev;
+        let sv = valValuesStateRef.current;
         let lvl = levelRef.current;
+        let valLvl = valLevelRef.current;
         for (let i = 0; i < delta; i++) {
-          historyRef.current.push({ levels: [...s], level: lvl, prngState: prng.getState() });
-          const r = tick(s, lvl, prng);
-          s = r.levels;
+          historyRef.current.push({
+            values: [...s],
+            valValues: [...sv],
+            level: lvl,
+            valLevel: valLvl,
+            step: stepRef.current,
+            prngState: prng.getState(),
+          });
+          const r = tick(s, sv, lvl, valLvl, prng);
+          s = r.values;
+          sv = r.valValues;
           lvl = r.level;
+          valLvl = r.valLevel;
+          stepRef.current += 1;
         }
         levelRef.current = lvl;
+        valLevelRef.current = valLvl;
+        setValValues(sv);
+        setStep(stepRef.current);
         return s;
       });
     } else if (delta < 0) {
@@ -96,47 +165,176 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
       if (snap) {
         prng.setState(snap.prngState);
         levelRef.current = snap.level;
-        setLevels(snap.levels);
+        valLevelRef.current = snap.valLevel;
+        stepRef.current = snap.step;
+        setValues(snap.values);
+        setValValues(snap.valValues);
+        setStep(snap.step);
       }
     }
     lastFrameRef.current = stepFrame;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepFrame, paused]);
 
-  // Color buckets: low loss (≤2) = accent3 (good), mid (3-4) = accent2,
-  // high (≥5) = accent1 (alarm).
-  const colorFor = (lvl: number) => {
-    if (lvl <= 2) return palette.accent3;
-    if (lvl <= 4) return palette.accent2;
-    return palette.accent1;
+  const PAD_L = 30;
+  const PAD_R = 6;
+  const PAD_T = 6;
+  const PAD_B = 16;
+  const chartW = Math.max(0, size.w - PAD_L - PAD_R);
+  const chartH = Math.max(0, size.h - PAD_T - PAD_B);
+
+  const xAt = (i: number) => PAD_L + (i / (WINDOW - 1)) * chartW;
+  const yAt = (v: number) => PAD_T + chartH - ((v - Y_MIN) / (Y_MAX - Y_MIN)) * chartH;
+
+  const linePath = (arr: number[]) =>
+    arr.length === 0
+      ? ''
+      : 'M ' + arr.map((v, i) => `${xAt(i).toFixed(2)} ${yAt(v).toFixed(2)}`).join(' L ');
+
+  const fillPath = (arr: number[]) => {
+    if (arr.length === 0) return '';
+    const top = arr.map((v, i) => `${xAt(i).toFixed(2)} ${yAt(v).toFixed(2)}`).join(' L ');
+    return `M ${xAt(0).toFixed(2)} ${yAt(Y_MIN).toFixed(2)} L ${top} L ${xAt(arr.length - 1).toFixed(2)} ${yAt(Y_MIN).toFixed(2)} Z`;
   };
+
+  const yTicks = [1.0, 0.75, 0.5, 0.25, 0.0];
+  const xTickCount = 5;
 
   return (
     <div className="brutalist-panel h-full flex flex-col min-h-0">
-      <div className="brutalist-label shrink-0">LOSS</div>
-      <div className="p-4 flex-1 flex flex-col justify-center" style={{ background: palette.bg }}>
-        <div className="flex items-center gap-2 mb-2">
-          <span
-            className="font-mono text-xs font-bold px-1"
-            style={{ background: palette.ink, color: palette.bg }}
-          >
-            L
-          </span>
-          <span
-            className="font-mono text-xs tracking-widest border-b-2 border-dotted flex-1"
-            style={{ color: palette.ink, opacity: 0.5, borderColor: palette.ink }}
-          >
-            ........................................
-          </span>
-        </div>
-        <div className="font-mono text-xl whitespace-nowrap overflow-hidden font-bold tracking-[-1px]">
-          {levels.map((lvl, i) => (
-            <span key={i} style={{ color: colorFor(lvl) }}>
-              {BLOCKS[lvl]}
-            </span>
-          ))}
-        </div>
+      <div className="brutalist-label shrink-0 flex justify-between items-center">
+        <span>LOSS</span>
+        <span className="font-mono text-[10px] opacity-60" style={{ color: palette.bg }}>
+          step {step.toString().padStart(4, '0')}
+        </span>
+      </div>
+      <div
+        ref={bodyRef}
+        className="flex-1 relative overflow-hidden"
+        style={{ background: palette.bg }}
+      >
+        {size.w > 0 && size.h > 0 && (
+          <svg width={size.w} height={size.h} className="block">
+            {/* Grid */}
+            {yTicks.map((t, i) => (
+              <line
+                key={`gy-${i}`}
+                x1={PAD_L}
+                x2={PAD_L + chartW}
+                y1={yAt(t)}
+                y2={yAt(t)}
+                stroke={palette.ink}
+                strokeOpacity={0.18}
+                strokeDasharray="2 3"
+                strokeWidth={1}
+              />
+            ))}
+            {Array.from({ length: xTickCount }).map((_, i) => {
+              const x = PAD_L + (i / (xTickCount - 1)) * chartW;
+              return (
+                <line
+                  key={`gx-${i}`}
+                  x1={x}
+                  x2={x}
+                  y1={PAD_T}
+                  y2={PAD_T + chartH}
+                  stroke={palette.ink}
+                  strokeOpacity={0.18}
+                  strokeDasharray="2 3"
+                  strokeWidth={1}
+                />
+              );
+            })}
+
+            {/* Axes */}
+            <line x1={PAD_L} x2={PAD_L} y1={PAD_T} y2={PAD_T + chartH} stroke={palette.ink} strokeWidth={1} />
+            <line x1={PAD_L} x2={PAD_L + chartW} y1={PAD_T + chartH} y2={PAD_T + chartH} stroke={palette.ink} strokeWidth={1} />
+
+            {/* Train fill + line */}
+            <path d={fillPath(values)} fill={palette.accent1} fillOpacity={0.18} />
+            <path d={linePath(values)} fill="none" stroke={palette.accent1} strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
+
+            {/* Validation curve (no fill, dashed-feel via opacity) */}
+            <path d={linePath(valValues)} fill="none" stroke={palette.accent2} strokeOpacity={0.65} strokeWidth={1.2} strokeDasharray="3 2" strokeLinejoin="round" strokeLinecap="round" />
+
+            {/* Y-axis labels */}
+            {yTicks.map((t, i) => (
+              <text
+                key={`yt-${i}`}
+                x={PAD_L - 3}
+                y={yAt(t) + 3}
+                textAnchor="end"
+                fontSize={9}
+                fontFamily="ui-monospace, monospace"
+                fill={palette.ink}
+                opacity={0.7}
+              >
+                {t.toFixed(2)}
+              </text>
+            ))}
+
+            {/* X-axis labels: step counters */}
+            {Array.from({ length: xTickCount }).map((_, i) => {
+              const x = PAD_L + (i / (xTickCount - 1)) * chartW;
+              const stepAt = Math.max(0, step - WINDOW + Math.round((i / (xTickCount - 1)) * (WINDOW - 1)));
+              return (
+                <text
+                  key={`xt-${i}`}
+                  x={x}
+                  y={PAD_T + chartH + 11}
+                  textAnchor={i === 0 ? 'start' : i === xTickCount - 1 ? 'end' : 'middle'}
+                  fontSize={9}
+                  fontFamily="ui-monospace, monospace"
+                  fill={palette.ink}
+                  opacity={0.7}
+                >
+                  {stepAt}
+                </text>
+              );
+            })}
+
+            {/* L cassette tag in top-left of chart */}
+            <g>
+              <rect x={PAD_L + 4} y={PAD_T + 4} width={14} height={12} fill={palette.ink} />
+              <text x={PAD_L + 11} y={PAD_T + 13} textAnchor="middle" fontSize={9} fontFamily="ui-monospace, monospace" fontWeight={700} fill={palette.bg}>
+                L
+              </text>
+            </g>
+
+            {/* Legend in top-right of chart */}
+            <g>
+              <rect x={PAD_L + chartW - 70} y={PAD_T + 4} width={6} height={6} fill={palette.accent1} />
+              <text x={PAD_L + chartW - 60} y={PAD_T + 10} fontSize={9} fontFamily="ui-monospace, monospace" fill={palette.ink} opacity={0.8}>
+                train
+              </text>
+              <rect x={PAD_L + chartW - 36} y={PAD_T + 4} width={6} height={6} fill={palette.accent2} fillOpacity={0.7} />
+              <text x={PAD_L + chartW - 26} y={PAD_T + 10} fontSize={9} fontFamily="ui-monospace, monospace" fill={palette.ink} opacity={0.8}>
+                val
+              </text>
+            </g>
+          </svg>
+        )}
       </div>
     </div>
   );
+}
+
+// Train-loss tick: occasional spike up, otherwise drift down. Bounded to
+// [0.02, 1.0] to keep the visible curve interesting.
+function nextLevel(prev: number, prng: SeededPrng): number {
+  const r = prng();
+  let next = prev;
+  if (r < 0.08) next = Math.min(1, prev + 0.15 + prng() * 0.2);
+  else if (r < 0.5) next = Math.max(0.02, prev - prng() * 0.05);
+  else next = Math.max(0.02, Math.min(1, prev + (prng() - 0.5) * 0.04));
+  return next;
+}
+
+// Validation tracks training loss with a slight positive offset and
+// reduced volatility so the two curves read clearly side-by-side.
+function nextValLevel(prev: number, train: number, prng: SeededPrng): number {
+  const target = Math.min(1, train + 0.06);
+  const drift = (target - prev) * 0.4;
+  const noise = (prng() - 0.5) * 0.03;
+  return Math.max(0.02, Math.min(1, prev + drift + noise));
 }

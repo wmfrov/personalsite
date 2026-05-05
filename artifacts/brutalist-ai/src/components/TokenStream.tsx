@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
-import { generateCharGrams } from '../lib/tokens';
+import { generateMixedToken } from '../lib/tokens';
 
 interface TokenStreamProps {
   seedData: SeedData;
@@ -13,31 +13,43 @@ interface TokenStreamProps {
 interface Snapshot {
   tokens: string[];
   idx: number;
+  /** Capture the visible-token cap at snapshot time so paused replay
+   * stays bit-identical even if the container is resized between
+   * stepping operations. */
+  maxTokens: number;
 }
 
-const MAX_TOKENS = 60;
+// Conservative average pixel cost per rendered token (incl. trailing
+// space). Used to size the visible-token cap from the container.
+const AVG_TOKEN_PX = 48;
+// Tailwind text-sm × leading-relaxed.
+const LINE_HEIGHT_PX = 22;
+const MIN_VISIBLE = 60;
+const MAX_VISIBLE = 800;
+// Generation buffer is large so the stream doesn't visibly loop within
+// a normal session.
+const GEN_BUFFER = 800;
 
 export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }: TokenStreamProps) {
   const [visibleTokens, setVisibleTokens] = useState<string[]>([]);
+  const [maxTokens, setMaxTokens] = useState<number>(MIN_VISIBLE);
   const tokensRef = useRef<string[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const idxRef = useRef(0);
   const visibleRef = useRef<string[]>([]);
   const historyRef = useRef<Snapshot[]>([]);
   const lastFrameRef = useRef(0);
+  const maxTokensRef = useRef<number>(MIN_VISIBLE);
+
+  useEffect(() => {
+    maxTokensRef.current = maxTokens;
+  }, [maxTokens]);
 
   useEffect(() => {
     const prng: SeededPrng = derivePrng(seedData, PanelSlot.TokenStream);
     const newTokens: string[] = [];
-    // Mix in BPE-ish markers (~30% leading "▁"), occasional "##" subwords
-    // (~10%), and a few "<...>" specials so syntax coloring has real targets.
-    for (let i = 0; i < 80; i++) {
-      let t = generateCharGrams(seedData.input, prng);
-      const r = prng();
-      if (r < 0.3) t = '▁' + t;
-      else if (r < 0.4) t = '##' + t;
-      else if (r < 0.43) t = `<${t.toUpperCase().slice(0, 4)}>`;
-      newTokens.push(t);
+    for (let i = 0; i < GEN_BUFFER; i++) {
+      newTokens.push(generateMixedToken(seedData.input, prng));
     }
     tokensRef.current = newTokens;
     setVisibleTokens([]);
@@ -47,11 +59,31 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
     lastFrameRef.current = 0;
   }, [seedData]);
 
+  // Size the visible-token cap from the actual container size so the box
+  // fills its space on a wide viewport instead of stopping at 60.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) {
+        const w = e.contentRect.width;
+        const h = e.contentRect.height;
+        const lines = Math.max(1, Math.floor(h / LINE_HEIGHT_PX));
+        const perLine = Math.max(4, Math.floor(w / AVG_TOKEN_PX));
+        const cap = Math.max(MIN_VISIBLE, Math.min(MAX_VISIBLE, lines * perLine));
+        setMaxTokens(prev => (prev === cap ? prev : cap));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const tickOnce = () => {
     const tokens = tokensRef.current;
     if (tokens.length === 0) return;
     const next = [...visibleRef.current, tokens[idxRef.current]];
-    while (next.length > MAX_TOKENS) next.shift();
+    const cap = maxTokensRef.current;
+    while (next.length > cap) next.shift();
     visibleRef.current = next;
     setVisibleTokens(next);
     idxRef.current = (idxRef.current + 1) % tokens.length;
@@ -73,7 +105,11 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
     const delta = stepFrame - lastFrameRef.current;
     if (delta > 0) {
       for (let i = 0; i < delta; i++) {
-        historyRef.current.push({ tokens: [...visibleRef.current], idx: idxRef.current });
+        historyRef.current.push({
+          tokens: [...visibleRef.current],
+          idx: idxRef.current,
+          maxTokens: maxTokensRef.current,
+        });
         tickOnce();
       }
     } else if (delta < 0) {
@@ -82,6 +118,8 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
       if (snap) {
         visibleRef.current = snap.tokens;
         idxRef.current = snap.idx;
+        maxTokensRef.current = snap.maxTokens;
+        setMaxTokens(snap.maxTokens);
         setVisibleTokens(snap.tokens);
       }
     }
@@ -95,6 +133,7 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
     if (tok.startsWith('▁')) color = palette.accent3;        // word-piece start
     else if (tok.startsWith('##')) color = palette.accent1;  // subword
     else if (tok.startsWith('<') && tok.endsWith('>')) color = palette.accent2; // special
+    else if (tok.startsWith('t_') || tok.startsWith('tok_')) color = palette.accent2; // tok ID
 
     return (
       <span key={i} style={{ color }}>

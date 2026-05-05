@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
+import { generateProbabilityLabel } from '../lib/tokens';
 
 interface ProbabilitiesProps {
   seedData: SeedData;
@@ -20,7 +21,7 @@ interface Snapshot {
   prngState: number;
 }
 
-const FAKE_LABELS = ['P(refactor)', 'P(ship)', 'P(revert)', 'P(debug)', 'P(coffee)', 'P(build)', 'P(deploy)', 'P(panic)'];
+const NUM_BARS = 8;
 
 export function Probabilities({ seedData, palette, paused = false, stepFrame = 0 }: ProbabilitiesProps) {
   const [bars, setBars] = useState<ProbBar[]>([]);
@@ -34,16 +35,18 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
     historyRef.current = [];
     lastFrameRef.current = 0;
     const newBars: ProbBar[] = [];
-
-    const pool = [...FAKE_LABELS];
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(initPrng() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
+    // De-duped pool of inscrutable token-style labels.
+    const labels = new Set<string>();
+    let guard = 0;
+    while (labels.size < NUM_BARS && guard < NUM_BARS * 8) {
+      labels.add(generateProbabilityLabel(initPrng));
+      guard++;
     }
-    const labels = pool.slice(0, 5);
-    for (let i = 0; i < 5; i++) {
+    const labelArr = Array.from(labels).slice(0, NUM_BARS);
+    while (labelArr.length < NUM_BARS) labelArr.push(generateProbabilityLabel(initPrng));
+    for (let i = 0; i < NUM_BARS; i++) {
       const val = initPrng();
-      newBars.push({ label: labels[i], value: val, target: val });
+      newBars.push({ label: labelArr[i], value: val, target: val });
     }
     setBars(newBars);
   }, [seedData]);
@@ -114,21 +117,27 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
     <div className="brutalist-panel h-full flex flex-col min-h-0">
       <div className="brutalist-label shrink-0">PROBABILITIES</div>
       <div
-        className="p-4 flex-1 flex flex-col justify-between font-mono text-sm"
+        className="px-3 py-2 flex-1 flex flex-col justify-between font-mono text-xs overflow-hidden"
         style={{ background: palette.bg }}
       >
         {bars.map((bar, i) => {
           const color = rankColor.get(i) ?? palette.ink;
           const rank = rankByTarget.findIndex(r => r.i === i);
           const badge = rank === 0 ? '①' : rank === 1 ? '②' : rank === 2 ? '③' : '·';
+          const logit = formatLogit(bar.target);
           return (
-            <div key={i} className="flex flex-col gap-1">
-              <div className="flex justify-between text-xs">
-                <span className="font-bold flex items-center gap-1" style={{ color: palette.ink }}>
+            <div key={i} className="flex flex-col gap-0.5 leading-none">
+              <div className="flex justify-between items-baseline text-[11px] gap-2">
+                <span className="font-bold flex items-center gap-1 truncate" style={{ color: palette.ink }}>
                   <span style={{ color }}>{badge}</span>
-                  {bar.label}
+                  <span className="truncate">{bar.label}</span>
                 </span>
-                <span style={{ color }}>{(bar.target * 100).toFixed(1)}%</span>
+                <span className="ml-auto tabular-nums opacity-60 shrink-0" style={{ color: palette.ink }}>
+                  {logit}
+                </span>
+                <span className="tabular-nums shrink-0" style={{ color }}>
+                  {(bar.target * 100).toFixed(1)}%
+                </span>
               </div>
               <div className="flex">{renderBar(bar.target, color, palette)}</div>
             </div>
@@ -140,13 +149,22 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
 }
 
 function renderBar(value: number, color: string, palette: Palette) {
-  const totalBlocks = 20;
+  const totalBlocks = 24;
   const filledBlocks = Math.floor(value * totalBlocks);
   const emptyBlocks = totalBlocks - filledBlocks;
   return (
-    <div className="font-bold tracking-[-1px]">
+    <div className="font-bold tracking-[-1px] text-[11px]">
       <span style={{ color }}>{'█'.repeat(filledBlocks)}</span>
       <span style={{ color: palette.ink, opacity: 0.3 }}>{'░'.repeat(emptyBlocks)}</span>
     </div>
   );
+}
+
+// Approximate log-odds of the displayed probability. Clamped so very
+// small / very large targets don't blow up to ±Infinity.
+function formatLogit(p: number): string {
+  const clamped = Math.max(0.001, Math.min(0.999, p));
+  const l = Math.log(clamped / (1 - clamped));
+  const sign = l >= 0 ? '+' : '−';
+  return `${sign}${Math.abs(l).toFixed(2)}`;
 }
