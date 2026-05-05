@@ -232,7 +232,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <Sticker />
+          {!hideChrome && <Sticker />}
         </div>
       </div>
     </div>

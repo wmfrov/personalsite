@@ -57,12 +57,21 @@ export function Probabilities({ seedData, paused = false, stepFrame = 0 }: Proba
     return next;
   };
 
+  // Seeded phase offset prevents lockstep ticking with the other panels.
   useEffect(() => {
     if (paused || bars.length === 0) return;
     const prng = jitterPrngRef.current!;
-    const interval = setInterval(() => setBars(prev => tick(prev, prng)), 500);
-    return () => clearInterval(interval);
-  }, [bars.length, paused]);
+    const phaseOffset = Math.floor(seedData.panelSeeds[PanelSlot.ProbsJitter] % 450);
+    let cleanup: () => void = () => {};
+    const start = setTimeout(() => {
+      const interval = setInterval(() => setBars(prev => tick(prev, prng)), 500);
+      cleanup = () => clearInterval(interval);
+    }, phaseOffset);
+    return () => {
+      clearTimeout(start);
+      cleanup();
+    };
+  }, [seedData, bars.length, paused]);
 
   useEffect(() => {
     if (!paused || bars.length === 0 || !jitterPrngRef.current) return;

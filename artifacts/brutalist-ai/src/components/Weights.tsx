@@ -37,14 +37,24 @@ export function Weights({ seedData, paused = false, stepFrame = 0 }: WeightsProp
     return next;
   };
 
-  // Live mode: timer-driven flicker (no history).
+  // Live mode: timer-driven flicker (no history). Seeded per-instance phase
+  // offset so this panel doesn't tick in unison with other animated panels.
   useEffect(() => {
     if (paused || weights.length === 0) return;
     const prng = flickerPrngRef.current!;
-    const interval = setInterval(() => {
+    const phaseOffset = Math.floor((seedData.panelSeeds[PanelSlot.WeightsFlicker] % 350));
+    const start = setTimeout(() => {
       setWeights(prev => tick(prev, prng));
-    }, 400);
-    return () => clearInterval(interval);
+      const interval = setInterval(() => {
+        setWeights(prev => tick(prev, prng));
+      }, 400);
+      cleanup = () => clearInterval(interval);
+    }, phaseOffset);
+    let cleanup: () => void = () => clearTimeout(start);
+    return () => {
+      clearTimeout(start);
+      cleanup();
+    };
   }, [seedData, paused, weights.length]);
 
   // Paused mode: arrow-key driven step with full bidirectional history.

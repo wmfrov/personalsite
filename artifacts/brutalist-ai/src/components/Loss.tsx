@@ -47,18 +47,27 @@ export function Loss({ seedData, paused = false, stepFrame = 0 }: LossProps) {
     return { curve: current.substring(1) + BLOCKS[nextLevel], level: nextLevel };
   };
 
+  // Seeded phase offset to break tick synchrony with other panels.
   useEffect(() => {
     if (paused || !curve) return;
     const prng = animPrngRef.current!;
-    const interval = setInterval(() => {
-      setCurve(prev => {
-        const r = tick(prev, levelRef.current, prng);
-        levelRef.current = r.level;
-        return r.curve;
-      });
-    }, 300);
-    return () => clearInterval(interval);
-  }, [curve, paused]);
+    const phaseOffset = Math.floor(seedData.panelSeeds[PanelSlot.LossAnim] % 250);
+    let cleanup: () => void = () => {};
+    const start = setTimeout(() => {
+      const interval = setInterval(() => {
+        setCurve(prev => {
+          const r = tick(prev, levelRef.current, prng);
+          levelRef.current = r.level;
+          return r.curve;
+        });
+      }, 300);
+      cleanup = () => clearInterval(interval);
+    }, phaseOffset);
+    return () => {
+      clearTimeout(start);
+      cleanup();
+    };
+  }, [seedData, curve, paused]);
 
   useEffect(() => {
     if (!paused || !curve || !animPrngRef.current) return;
