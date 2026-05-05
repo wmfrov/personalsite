@@ -9,6 +9,14 @@ interface ExportModalProps {
 export function ExportModal({ isOpen, onClose, onPresetSelect }: ExportModalProps) {
   const [customW, setCustomW] = useState('1200');
   const [customH, setCustomH] = useState('630');
+
+  const MIN_DIM = 100;
+  const MAX_DIM = 4096;
+  const parsedW = parseInt(customW);
+  const parsedH = parseInt(customH);
+  const wValid = Number.isFinite(parsedW) && parsedW >= MIN_DIM && parsedW <= MAX_DIM;
+  const hValid = Number.isFinite(parsedH) && parsedH >= MIN_DIM && parsedH <= MAX_DIM;
+  const customValid = wValid && hValid;
   
   // Handle ESC
   useEffect(() => {
@@ -77,14 +85,20 @@ export function ExportModal({ isOpen, onClose, onPresetSelect }: ExportModalProp
                 />
               </div>
               <button 
-                onClick={() => onPresetSelect(parseInt(customW) || 1200, parseInt(customH) || 630)}
-                className="brutalist-button shrink-0 h-[46px]"
+                onClick={() => customValid && onPresetSelect(parsedW, parsedH)}
+                disabled={!customValid}
+                className="brutalist-button shrink-0 h-[46px] disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 GO
               </button>
             </div>
+            {!customValid && (customW !== '' || customH !== '') && (
+              <p className="text-xs text-ph-red font-mono mt-1 font-bold">
+                ! width &amp; height must be {MIN_DIM}–{MAX_DIM} px
+              </p>
+            )}
           </div>
-          
+
           <p className="text-xs text-ink/70 font-mono mt-4 leading-tight">
             Selecting a preset will freeze the dashboard and resize it to exact pixel dimensions. Use arrow keys to find the perfect frame.
           </p>
