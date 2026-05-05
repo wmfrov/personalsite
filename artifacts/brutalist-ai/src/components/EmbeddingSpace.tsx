@@ -13,6 +13,18 @@ const NUM_CLUSTERS = 4;
 const NUM_PINNED = 6;
 const TRAIL_LIFETIME_MS = 900;
 
+// Connection-layer tunables (replaces convex hulls).
+// FOG mode draws every pair within PROX_RADIUS as faint ink strands plus a
+// k-NN layer in cluster colors on top. ATTN mode draws a quiet k-NN ink
+// underlay plus bold accent edges from the "you" dot to its top-K nearest
+// other dots, weighted by a softmax over inverse distance.
+const PROX_RADIUS = 0.18;
+const K_NN = 2;
+const ATTN_TOP_K = 5;
+const ATTN_TEMPERATURE = 0.06;
+
+type ConnectionMode = 'fog' | 'attn';
+
 interface EmbeddingSpaceProps {
   seedData: SeedData;
   palette: Palette;
@@ -67,36 +79,6 @@ interface ClusterMeta {
   dimAxisLabel: string;
 }
 
-/** Andrew's monotone chain — returns convex hull vertices in CCW order. */
-function convexHull(points: { x: number; y: number }[]): { x: number; y: number }[] {
-  if (points.length <= 1) return points.slice();
-  const pts = points.slice().sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-  const cross = (
-    o: { x: number; y: number },
-    a: { x: number; y: number },
-    b: { x: number; y: number },
-  ) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-
-  const lower: { x: number; y: number }[] = [];
-  for (const p of pts) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
-      lower.pop();
-    }
-    lower.push(p);
-  }
-  const upper: { x: number; y: number }[] = [];
-  for (let i = pts.length - 1; i >= 0; i--) {
-    const p = pts[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
-      upper.pop();
-    }
-    upper.push(p);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
 function gaussian(prng: SeededPrng): number {
   // Box–Muller (only need one component).
   const u = Math.max(1e-9, prng());
@@ -116,6 +98,7 @@ export function EmbeddingSpace({
   const [hoveredDotId, setHoveredDotId] = useState<number | null>(null);
   const [nearestNeighbors, setNearestNeighbors] = useState<number[]>([]);
   const [clusters, setClusters] = useState<ClusterMeta[]>([]);
+  const [mode, setMode] = useState<ConnectionMode>('fog');
   const [, forceTick] = useState(0); // re-render trails over time even if dots don't change
 
   const mouseRef = useRef({ x: -1000, y: -1000, active: false });
@@ -399,19 +382,139 @@ export function EmbeddingSpace({
     return palette.accent3;
   };
 
-  // Pre-compute hulls per cluster.
-  const hullsByCluster = clusters.map((_, ci) => {
-    const points = dots.filter(d => d.cluster === ci).map(d => ({ x: d.x, y: d.y }));
-    return convexHull(points);
-  });
+  // Compute the connection layer fresh each render so edges follow the live
+  // drift physics. With NUM_DOTS=120 the all-pairs proximity scan is ~7,140
+  // distance computations, and k-NN per dot is ~120*119 sort entries — both
+  // comfortably under a 16ms frame budget. Everything derives from current
+  // dot.x/dot.y (no time-based randomness), so paused/export stepping stays
+  // byte-identical for a given mode.
+  type ProxEdge = { x1: number; y1: number; x2: number; y2: number; dist: number };
+  type KnnEdge = { x1: number; y1: number; x2: number; y2: number; cluster: number };
+  type AttnEdge = { x1: number; y1: number; x2: number; y2: number; weight: number; targetId: number };
+
+  const proxEdges: ProxEdge[] = [];
+  const knnEdges: KnnEdge[] = [];
+  const attnEdges: AttnEdge[] = [];
+
+  if (dots.length > 0) {
+    if (mode === 'fog') {
+      for (let i = 0; i < dots.length; i++) {
+        const di = dots[i];
+        for (let j = i + 1; j < dots.length; j++) {
+          const dj = dots[j];
+          const dx = dj.x - di.x;
+          const dy = dj.y - di.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d <= PROX_RADIUS) {
+            proxEdges.push({ x1: di.x, y1: di.y, x2: dj.x, y2: dj.y, dist: d });
+          }
+        }
+      }
+    }
+
+    // k-NN — undirected, deduped. In FOG mode we keep only same-cluster edges
+    // (the colored web mirrors the canvas mockup); in ATTN mode we keep all
+    // k-NN as a quiet ink underlay so the eye still reads the topology.
+    const seen = new Set<number>();
+    for (let i = 0; i < dots.length; i++) {
+      const di = dots[i];
+      const cands: { idx: number; dist: number }[] = [];
+      for (let j = 0; j < dots.length; j++) {
+        if (j === i) continue;
+        const dj = dots[j];
+        const dx = dj.x - di.x;
+        const dy = dj.y - di.y;
+        cands.push({ idx: j, dist: Math.sqrt(dx * dx + dy * dy) });
+      }
+      cands.sort((a, b) => a.dist - b.dist);
+      for (let k = 0; k < Math.min(K_NN, cands.length); k++) {
+        const n = cands[k];
+        const a = i < n.idx ? i : n.idx;
+        const b = i < n.idx ? n.idx : i;
+        const key = a * NUM_DOTS + b;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const dn = dots[n.idx];
+        if (mode === 'fog' && di.cluster !== dn.cluster) continue;
+        knnEdges.push({ x1: di.x, y1: di.y, x2: dn.x, y2: dn.y, cluster: di.cluster });
+      }
+    }
+
+    if (mode === 'attn') {
+      const you = dots.find(d => d.isYou);
+      if (you) {
+        const others = dots
+          .filter(d => !d.isYou)
+          .map(d => {
+            const dx = d.x - you.x;
+            const dy = d.y - you.y;
+            return { id: d.id, x: d.x, y: d.y, dist: Math.sqrt(dx * dx + dy * dy) };
+          })
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, ATTN_TOP_K);
+        const scores = others.map(o => Math.exp(-o.dist / ATTN_TEMPERATURE));
+        const sum = scores.reduce((a, b) => a + b, 0) || 1;
+        others.forEach((o, i) => {
+          attnEdges.push({
+            x1: you.x,
+            y1: you.y,
+            x2: o.x,
+            y2: o.y,
+            weight: scores[i] / sum,
+            targetId: o.id,
+          });
+        });
+      }
+    }
+  }
+
+  const attnWeightById = new Map<number, number>();
+  for (const e of attnEdges) attnWeightById.set(e.targetId, e.weight);
 
   const now = performance.now();
 
   return (
     <div className="brutalist-panel w-full h-full flex flex-col overflow-hidden">
-      <div className="brutalist-label z-10 w-full shrink-0 flex justify-between">
+      <div className="brutalist-label z-10 w-full shrink-0 flex justify-between items-center gap-2">
         <span>EMBEDDING SPACE</span>
-        <span style={{ color: palette.bg, opacity: 0.5 }}>D-256 · N={NUM_DOTS}</span>
+        <div className="flex items-center gap-2">
+          <div className="flex" role="group" aria-label="Connection mode">
+            <button
+              type="button"
+              onClick={() => setMode('fog')}
+              className="font-mono font-bold uppercase tracking-wider px-1.5 leading-none cursor-pointer"
+              style={{
+                fontSize: 9,
+                paddingTop: 2,
+                paddingBottom: 2,
+                background: mode === 'fog' ? palette.bg : 'transparent',
+                color: mode === 'fog' ? palette.ink : palette.bg,
+                border: `1px solid ${palette.bg}`,
+                opacity: mode === 'fog' ? 1 : 0.6,
+              }}
+              aria-pressed={mode === 'fog'}
+              aria-label="Proximity fog + k-NN"
+            >FOG</button>
+            <button
+              type="button"
+              onClick={() => setMode('attn')}
+              className="font-mono font-bold uppercase tracking-wider px-1.5 leading-none cursor-pointer"
+              style={{
+                fontSize: 9,
+                paddingTop: 2,
+                paddingBottom: 2,
+                background: mode === 'attn' ? palette.bg : 'transparent',
+                color: mode === 'attn' ? palette.ink : palette.bg,
+                border: `1px solid ${palette.bg}`,
+                borderLeft: 'none',
+                opacity: mode === 'attn' ? 1 : 0.6,
+              }}
+              aria-pressed={mode === 'attn'}
+              aria-label="Attention from you to top-k"
+            >ATTN</button>
+          </div>
+          <span style={{ color: palette.bg, opacity: 0.5 }}>D-256 · N={NUM_DOTS}</span>
+        </div>
       </div>
 
       <div
@@ -516,29 +619,62 @@ export function EmbeddingSpace({
           </>
         )}
 
-        {/* Hulls render in their own SVG with viewBox so the <polygon> `points`
-            attribute can use plain numbers (% units are not allowed there). */}
-        <svg
-          className="absolute inset-0 w-full h-full pointer-events-none z-10"
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-        >
-          {hullsByCluster.map((hull, ci) => {
-            if (hull.length < 3) return null;
-            const points = hull.map(p => `${p.x * 100},${p.y * 100}`).join(' ');
-            const color = colorForCluster(ci);
+        {/* Connection layer (replaces cluster hulls). FOG mode: faint
+            proximity strands underneath sharper colored k-NN. ATTN mode:
+            quiet ink k-NN underlay underneath bold accent attention edges
+            from the "you" dot. Endpoints recompute every render from
+            current dot.x/dot.y so edges follow live drift. */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible">
+          {mode === 'fog' && proxEdges.map((e, i) => {
+            const op = (1 - e.dist / PROX_RADIUS) * 0.32;
             return (
-              <polygon
-                key={`hull-${ci}`}
-                points={points}
-                fill={color}
-                fillOpacity={0.07}
-                stroke={color}
-                strokeOpacity={0.45}
-                strokeWidth={0.4}
-                strokeDasharray="1 0.7"
-                vectorEffect="non-scaling-stroke"
+              <line
+                key={`prox-${i}`}
+                x1={`${e.x1 * 100}%`}
+                y1={`${e.y1 * 100}%`}
+                x2={`${e.x2 * 100}%`}
+                y2={`${e.y2 * 100}%`}
+                stroke={palette.ink}
+                strokeOpacity={op}
+                strokeWidth={0.6}
               />
+            );
+          })}
+          {knnEdges.map((e, i) => (
+            <line
+              key={`knn-${i}`}
+              x1={`${e.x1 * 100}%`}
+              y1={`${e.y1 * 100}%`}
+              x2={`${e.x2 * 100}%`}
+              y2={`${e.y2 * 100}%`}
+              stroke={mode === 'fog' ? colorForCluster(e.cluster) : palette.ink}
+              strokeOpacity={mode === 'fog' ? 0.85 : 0.18}
+              strokeWidth={mode === 'fog' ? 1.6 : 0.8}
+            />
+          ))}
+          {mode === 'attn' && attnEdges.map((e, i) => {
+            const w = 1 + e.weight * 7;
+            return (
+              <g key={`attn-${i}`}>
+                <line
+                  x1={`${e.x1 * 100}%`}
+                  y1={`${e.y1 * 100}%`}
+                  x2={`${e.x2 * 100}%`}
+                  y2={`${e.y2 * 100}%`}
+                  stroke={palette.ink}
+                  strokeOpacity={1}
+                  strokeWidth={w + 2}
+                />
+                <line
+                  x1={`${e.x1 * 100}%`}
+                  y1={`${e.y1 * 100}%`}
+                  x2={`${e.x2 * 100}%`}
+                  y2={`${e.y2 * 100}%`}
+                  stroke={accent}
+                  strokeOpacity={0.85 + e.weight * 0.15}
+                  strokeWidth={w}
+                />
+              </g>
             );
           })}
         </svg>
@@ -568,8 +704,10 @@ export function EmbeddingSpace({
             );
           })}
 
-          {/* Nearest-neighbor lines on hover */}
-          {hoveredDotId !== null &&
+          {/* Nearest-neighbor lines on hover. Suppressed in FOG mode (k-NN
+              already shown for every dot) and when hovering "you" in ATTN
+              mode (attention edges already emanate from there). */}
+          {mode === 'attn' && hoveredDotId !== null && hoveredDotId !== 0 &&
             nearestNeighbors.map(nId => {
               const hDot = dots.find(d => d.id === hoveredDotId);
               const nDot = dots.find(d => d.id === nId);
@@ -592,8 +730,14 @@ export function EmbeddingSpace({
         {dots.map(dot => {
           const isHovered = hoveredDotId === dot.id;
           const isNeighbor = nearestNeighbors.includes(dot.id);
+          const attnWeight = attnWeightById.get(dot.id);
+          const isAttended = attnWeight !== undefined;
           const dotColor = dot.isYou ? accent : colorForCluster(dot.cluster);
-          const showLabel = dot.pinned || isHovered || isNeighbor;
+          const showLabel = dot.pinned || isHovered || isNeighbor || isAttended;
+          // Attended target chips share styling with the "you" chip (accent
+          // background, ink border) so the attention relationship reads at a
+          // glance. Pinned + attended combines into one chip with `· NN%`.
+          const useAccentChip = dot.isYou || isAttended;
 
           return (
             <div
@@ -603,7 +747,7 @@ export function EmbeddingSpace({
                 left: `${dot.x * 100}%`,
                 top: `${dot.y * 100}%`,
                 transform: 'translate(-50%, -50%)',
-                zIndex: dot.isYou ? 30 : isHovered ? 40 : isNeighbor ? 25 : dot.pinned ? 20 : 10,
+                zIndex: dot.isYou ? 30 : isHovered ? 40 : isAttended ? 28 : isNeighbor ? 25 : dot.pinned ? 20 : 10,
               }}
               onMouseEnter={() => setHoveredDotId(dot.id)}
               onMouseLeave={() => setHoveredDotId(prev => (prev === dot.id ? null : prev))}
@@ -620,14 +764,14 @@ export function EmbeddingSpace({
                 <div
                   className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-1 select-none font-mono text-xs font-bold"
                   style={{
-                    backgroundColor: dot.isYou ? accent : isHovered || isNeighbor ? palette.ink : palette.bg,
-                    color: dot.isYou ? palette.ink : isHovered || isNeighbor ? palette.bg : palette.ink,
-                    transform: isHovered || isNeighbor ? 'scale(1.15)' : 'scale(1)',
+                    backgroundColor: useAccentChip ? accent : isHovered || isNeighbor ? palette.ink : palette.bg,
+                    color: useAccentChip ? palette.ink : isHovered || isNeighbor ? palette.bg : palette.ink,
+                    transform: isHovered || isNeighbor || isAttended ? 'scale(1.15)' : 'scale(1)',
                     transformOrigin: 'left center',
-                    border: dot.isYou ? `2px solid ${palette.ink}` : dot.pinned ? `1px solid ${palette.ink}` : 'none',
+                    border: useAccentChip ? `2px solid ${palette.ink}` : dot.pinned ? `1px solid ${palette.ink}` : 'none',
                   }}
                 >
-                  {dot.label}
+                  {dot.label}{isAttended ? ` · ${(attnWeight! * 100).toFixed(0)}%` : ''}
                 </div>
               )}
             </div>
