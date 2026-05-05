@@ -7,7 +7,6 @@ import { TokenStream } from '../components/TokenStream';
 import { Loss } from '../components/Loss';
 import { Probabilities } from '../components/Probabilities';
 import { ExportModal } from '../components/ExportModal';
-import { Sticker } from '../components/Sticker';
 import { parseSeed, SeedData } from '../lib/hash';
 
 interface ExportState {
@@ -238,9 +237,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className={`transition-opacity duration-200 ${hideChrome ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <Sticker />
-          </div>
         </div>
       </div>
     </div>
