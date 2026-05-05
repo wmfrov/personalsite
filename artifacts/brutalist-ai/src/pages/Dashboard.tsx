@@ -24,19 +24,14 @@ export default function Dashboard() {
   const [exportState, setExportState] = useState<ExportState>({ active: false, w: 0, h: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Global frame step counter for export mode. Each panel watches it and
-  // applies the delta against its own snapshot history: positive delta ticks
-  // forward (snapshotting prior state + PRNG), negative delta pops snapshots
-  // and restores. This gives true bidirectional frame stepping where
-  // forward → back → forward returns to the exact same state.
+  // Shared frame counter; panels apply +/- deltas against their snapshot history.
   const [stepFrame, setStepFrame] = useState(0);
-  // Bumped on entering export mode to force panel remount + history reset.
+  // Bumped on entering export mode to remount panels + reset history.
   const [resetKey, setResetKey] = useState(0);
 
   const dashboardRef = useRef<HTMLDivElement>(null);
 
-  // Init seed from URL hash if present. Wrap decode in try/catch so a
-  // malformed `%XX` sequence in the URL bar can't crash the app.
+  // Restore seed from URL hash; tolerate malformed %XX sequences.
   useEffect(() => {
     const raw = window.location.hash.slice(1);
     if (!raw) return;
@@ -47,9 +42,7 @@ export default function Dashboard() {
     }
   }, []);
 
-  // Rehash when seed changes (committed via Enter / blur, not per keystroke).
-  // Guard against stale async commits if `seed` changes again before the
-  // previous SHA-256 digest resolves.
+  // Rehash on commit (Enter/blur). Guard against stale async digests.
   useEffect(() => {
     let cancelled = false;
     parseSeed(seed).then(data => {
@@ -62,10 +55,8 @@ export default function Dashboard() {
     };
   }, [seed]);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger global shortcuts while typing in an input
       const tag = (document.activeElement?.tagName ?? '').toUpperCase();
       const typing = tag === 'INPUT' || tag === 'TEXTAREA';
 
@@ -145,9 +136,7 @@ export default function Dashboard() {
     }
   };
 
-  // Recompute export-preview scale on viewport resize so the frozen banner
-  // doesn't overflow / stay tiny when the user resizes the window. Declared
-  // above any early return to keep hook order invariant across renders.
+  // Re-scale preview on resize; declared above early return to keep hook order.
   const [viewport, setViewport] = useState({
     w: typeof window !== 'undefined' ? window.innerWidth : 1280,
     h: typeof window !== 'undefined' ? window.innerHeight : 720,

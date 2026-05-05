@@ -46,19 +46,15 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
   const historyRef = useRef<FrameSnapshot[]>([]);
   const lastFrameRef = useRef(0);
 
-  // Initialize dots from seed
   useEffect(() => {
-    // Dedicated PRNG for layout/initialization (offset 1)
     const prng = derivePrng(seedData, PanelSlot.EmbeddingLayout);
-    // Dedicated PRNG for runtime animation (offset 2) — keeps same seed
-    // producing same snap-jump sequence regardless of other panels.
+    // Separate animation PRNG so snap-jumps stay reproducible per seed.
     animPrngRef.current = derivePrng(seedData, PanelSlot.EmbeddingAnim);
     const numDots = 40;
     const tokens = generateEmbeddingTokens(numDots - 1, prng);
     
     const newDots: Dot[] = [];
     
-    // Add "you" dot
     newDots.push({
       id: 0,
       baseX: seedData.youX,
@@ -76,7 +72,6 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
       svy: 0,
     });
 
-    // Add other dots
     for (let i = 0; i < numDots - 1; i++) {
       const x = prng();
       const y = prng();
@@ -105,7 +100,7 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
     lastFrameRef.current = 0;
   }, [seedData]);
   
-  // Single physics step. dt is in ms; pass ~16 for one frame's worth.
+  // Single physics step (dt in ms; ~16 for one frame).
   const snapTimerRef = useRef(0);
   const stepPhysics = (dt: number) => {
     snapTimerRef.current += dt;
@@ -155,8 +150,7 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
         dot.baseY = Math.max(0, Math.min(1, dot.baseY));
       }
 
-      // Velocity-based spring with damping → produces a slight overshoot
-      // when the cursor attraction snaps targets into place.
+      // Spring + damping for cursor-attract overshoot.
       const stiffness = dot.lag * 1.4;
       const damping = 0.62;
       dot.svx = dot.svx * damping + (dot.targetX - dot.x) * stiffness;
@@ -169,7 +163,6 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
     setDots(newDots);
   };
 
-  // Live mode: requestAnimationFrame loop.
   useEffect(() => {
     if (paused) return;
     let animationFrameId: number;
@@ -187,9 +180,7 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused]);
 
-  // Paused mode: bidirectional frame stepping with full snapshot history
-  // (dots, snapTimer, PRNG state) so forward → back → forward returns to
-  // the exact same physical state.
+  // Paused: bidirectional frame stepping via snapshot history (state + PRNG).
   useEffect(() => {
     if (!paused) return;
     const prng = animPrngRef.current;
@@ -219,7 +210,6 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepFrame, paused]);
   
-  // Mouse event handlers
   const handleMouseMove = (e: React.MouseEvent) => {
     mouseRef.current = { x: e.clientX, y: e.clientY, active: true };
   };
@@ -230,14 +220,12 @@ export function EmbeddingSpace({ seedData, paused = false, stepFrame = 0 }: Embe
     setNearestNeighbors([]);
   };
   
-  // Calculate nearest neighbors on hover
   useEffect(() => {
     if (hoveredDotId === null || paused) return;
     
     const hoverDot = dots.find(d => d.id === hoveredDotId);
     if (!hoverDot) return;
     
-    // Calculate distances
     const dists = dots
       .filter(d => d.id !== hoveredDotId)
       .map(d => ({
