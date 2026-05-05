@@ -208,7 +208,7 @@ export default function Dashboard() {
       const dataUrl = await htmlToImage.toPng(dashboardRef.current, {
         width: exportState.w,
         height: exportState.h,
-        pixelRatio: 2,
+        pixelRatio: 1,
         style: { transform: 'none', position: 'static' },
       });
 
