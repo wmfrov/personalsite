@@ -17,6 +17,35 @@ interface ExportState {
   h: number;
 }
 
+const BANNER_ZOOM_PRESETS = [1, 1.25, 1.5, 2] as const;
+type BannerZoom = (typeof BANNER_ZOOM_PRESETS)[number];
+
+/**
+ * Wait for IBM Plex Mono in the weights/sizes the dashboard renders to
+ * be fully ready before rasterizing. `document.fonts.ready` resolves
+ * once the in-flight font loads complete; the explicit `.load(...)`
+ * calls force any not-yet-requested faces (e.g. bold) to be fetched so
+ * the very first export after a hard reload doesn't fall back to the
+ * browser's default monospace.
+ */
+async function ensurePlexMonoReady(): Promise<void> {
+  if (typeof document === 'undefined' || !document.fonts) return;
+  const sizes = ['10px', '11px', '12px', '14px', '16px', '24px'];
+  const weights = [400, 500, 700];
+  const specs: string[] = [];
+  for (const w of weights) {
+    for (const s of sizes) {
+      specs.push(`${w} ${s} "IBM Plex Mono"`);
+    }
+  }
+  try {
+    await Promise.all(specs.map(s => document.fonts.load(s)));
+  } catch {
+    /* per-spec failures are non-fatal — fall through to fonts.ready */
+  }
+  await document.fonts.ready;
+}
+
 /**
  * URL hash format: `#<encoded-seed>|<paletteId>`. Backward-compatible — if no
  * `|` is present (old links) the whole hash is treated as the seed and the
@@ -61,6 +90,11 @@ export default function Dashboard() {
   const [hideChrome, setHideChrome] = useState(false);
   const [exportState, setExportState] = useState<ExportState>({ active: false, w: 0, h: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [bannerZoom, setBannerZoom] = useState<BannerZoom>(1);
+  // Set true for the duration of htmlToImage rasterization so the
+  // viewport-fit transform is dropped and the dashboard renders at its
+  // native banner pixel dimensions while the snapshot is taken.
+  const [capturing, setCapturing] = useState(false);
 
   // Shared frame counter; panels apply +/- deltas against their snapshot history.
   const [stepFrame, setStepFrame] = useState(0);
@@ -196,31 +230,52 @@ export default function Dashboard() {
     setIsModalOpen(false);
     setStepFrame(0);
     setResetKey(k => k + 1);
+    setBannerZoom(1);
     setExportState({ active: true, w, h });
   };
 
   const downloadImage = async () => {
     if (!dashboardRef.current) return;
-    const instructionBar = document.getElementById('export-instruction-bar');
 
+    // 1. Make sure IBM Plex Mono is loaded so the rasterizer doesn't
+    //    fall back to the browser's default monospace.
+    // 2. Drop the viewport-fit `transform: scale(...)` for the duration
+    //    of the snapshot so html-to-image captures the dashboard at
+    //    native banner pixel dimensions instead of the on-screen scale.
+    // 3. Filter the instruction-bar / scrubber chrome out of the cloned
+    //    tree so only the dashboard panels make it into the PNG.
+    setCapturing(true);
     try {
-      if (instructionBar) instructionBar.style.display = 'none';
+      await ensurePlexMonoReady();
+      // One paint frame so React's `transform: none` is applied before
+      // the rasterizer reads computed styles from the live node.
+      await new Promise(requestAnimationFrame);
 
       const dataUrl = await htmlToImage.toPng(dashboardRef.current, {
         width: exportState.w,
         height: exportState.h,
-        pixelRatio: 1,
-        style: { transform: 'none', position: 'static' },
+        // hi-DPI output keeps text crisp on retina/4K feeds; the file is
+        // 4× the byte size but each banner is still well under typical
+        // social-media upload limits.
+        pixelRatio: 2,
+        cacheBust: false,
+        filter: (node: HTMLElement) =>
+          !(node instanceof Element && node.hasAttribute('data-export-skip')),
+        style: {
+          transform: 'none',
+          position: 'static',
+        },
       });
 
       const link = document.createElement('a');
-      link.download = `brutalist-banner-${seedData?.hash?.substring(0, 8) || 'export'}-${paletteId}.png`;
+      const zoomTag = `${bannerZoom}x`.replace('.', '_');
+      link.download = `brutalist-banner-${seedData?.hash?.substring(0, 8) || 'export'}-${paletteId}-${exportState.w}x${exportState.h}-${zoomTag}.png`;
       link.href = dataUrl;
       link.click();
     } catch (err) {
       console.error('Failed to export image', err);
     } finally {
-      if (instructionBar) instructionBar.style.display = 'flex';
+      setCapturing(false);
     }
   };
 
@@ -279,7 +334,11 @@ export default function Dashboard() {
                   background: 'var(--bg)',
                   width: exportState.w,
                   height: exportState.h,
-                  transform: `scale(min(1, ${(viewport.w - 64) / exportState.w}, ${(viewport.h - 120) / exportState.h}))`,
+                  // Drop the viewport-fit scale during rasterization so the
+                  // PNG captures the dashboard at native banner pixels.
+                  transform: capturing
+                    ? 'none'
+                    : `scale(min(1, ${(viewport.w - 64) / exportState.w}, ${(viewport.h - 120) / exportState.h}))`,
                   transformOrigin: 'center center',
                 }
               : { background: 'var(--bg)' }
@@ -301,7 +360,8 @@ export default function Dashboard() {
             return (
               <div
                 id="export-instruction-bar"
-                className="absolute -top-24 left-0 right-0 flex flex-col gap-2 px-4 py-2 font-bold z-50"
+                data-export-skip="true"
+                className="absolute -top-32 left-0 right-0 flex flex-col gap-2 px-4 py-2 font-bold z-50"
                 style={{
                   background: palette.accent3,
                   color: palette.ink,
@@ -334,7 +394,43 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Row 2: scrubber + jump buttons + frame input */}
+                {/* Row 2: BANNER ZOOM segmented control */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-normal opacity-80">BANNER ZOOM</span>
+                  <div className="flex" role="group" aria-label="Banner zoom multiplier">
+                    {BANNER_ZOOM_PRESETS.map((z, i) => {
+                      const active = bannerZoom === z;
+                      return (
+                        <button
+                          key={z}
+                          type="button"
+                          onClick={() => setBannerZoom(z)}
+                          aria-pressed={active}
+                          style={{
+                            background: active ? palette.ink : palette.bg,
+                            color: active ? palette.bg : palette.ink,
+                            border: `3px solid ${palette.ink}`,
+                            borderLeftWidth: i === 0 ? 3 : 0,
+                            padding: '2px 10px',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                            minWidth: 48,
+                          }}
+                        >
+                          {z}×
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span className="text-[11px] font-normal opacity-70 ml-2">
+                    Output {exportState.w} × {exportState.h} px · panels laid out at{' '}
+                    {Math.round(exportState.w / bannerZoom)} × {Math.round(exportState.h / bannerZoom)}
+                  </span>
+                </div>
+
+                {/* Row 3: scrubber + jump buttons + frame input */}
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => jumpFrame(-10 * FRAMES_PER_SECOND)}
@@ -432,6 +528,29 @@ export default function Dashboard() {
             stepFrame={stepFrame}
             resetKey={`${seedData.hash}|${resetKey}`}
           >
+            {/*
+              BANNER ZOOM wrapper: in export mode the inner panels are
+              laid out into a smaller box (banner dims ÷ zoom), then the
+              browser's native CSS `zoom` scales the rendered result back
+              up to the full banner dimensions. Net effect: every panel
+              element (text, dots, axis ticks, weights, loss curve, bars,
+              chip) reads as `zoom×` larger relative to the crop, with no
+              `transform: scale` blurring on the output (zoom rescales the
+              layout itself rather than rasterizing-then-stretching). The
+              wrapper is a no-op in non-export mode.
+            */}
+            <div
+              className={exportState.active ? '' : 'w-full h-full'}
+              style={
+                exportState.active
+                  ? ({
+                      width: exportState.w / bannerZoom,
+                      height: exportState.h / bannerZoom,
+                      zoom: bannerZoom,
+                    } as React.CSSProperties)
+                  : undefined
+              }
+            >
             <div className="w-full h-full flex flex-col md:flex-row gap-4">
               <div className="flex-[2] md:w-[65%] min-w-0 h-1/2 md:h-full">
                 <EmbeddingSpace
@@ -462,6 +581,7 @@ export default function Dashboard() {
                   <Probabilities key={`p-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
                 </div>
               </div>
+            </div>
             </div>
           </TrainingCycleProvider>
 
