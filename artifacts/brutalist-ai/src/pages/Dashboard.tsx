@@ -141,10 +141,12 @@ export default function Dashboard() {
   };
 
   // Auto-flip schedule for Token Stream: 0.5s after first paint, then toggle
-  // every 7s. Cancelled the moment the user clicks any flip button or when
-  // export mode is engaged.
+  // every 7s. Runs once per page load — cancelled by the first manual flip
+  // and never re-armed (including after exiting export mode).
+  const autoFlipStartedRef = useRef(false);
   useEffect(() => {
-    if (exportState.active || userFlippedRef.current) return;
+    if (exportState.active || userFlippedRef.current || autoFlipStartedRef.current) return;
+    autoFlipStartedRef.current = true;
     let interval: ReturnType<typeof setInterval> | null = null;
     const start = setTimeout(() => {
       if (userFlippedRef.current) return;

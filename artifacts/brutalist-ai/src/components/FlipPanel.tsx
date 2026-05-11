@@ -98,9 +98,9 @@ function FlipButton({
       style={{
         background: palette.bg,
         color: palette.ink,
-        border: `2px solid ${palette.ink}`,
-        boxShadow: `2px 2px 0 0 ${palette.ink}`,
-        padding: '2px 6px',
+        border: `3px solid ${palette.ink}`,
+        boxShadow: `4px 4px 0 0 ${palette.ink}`,
+        padding: '3px 7px',
         fontSize: 10,
         lineHeight: 1,
         letterSpacing: '0.05em',
