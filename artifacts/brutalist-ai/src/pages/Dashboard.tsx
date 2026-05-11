@@ -89,7 +89,7 @@ function parseHash(raw: string): { seed: string | null; paletteId: string } {
 }
 
 export default function Dashboard() {
-  const [seed, setSeed] = useState('hello world');
+  const [seed, setSeed] = useState('willziegler.com');
   const [seedData, setSeedData] = useState<SeedData | null>(null);
   const [paletteId, setPaletteId] = useState<string>(DEFAULT_PALETTE_ID);
 
