@@ -22,6 +22,9 @@ export interface Project {
   tag: string;
   year: string;
   href: string;
+  /** Optional thumbnail URL or relative path. Rendered as a small image
+   *  strip above the project blurb when provided. */
+  image?: string;
 }
 
 export interface SiteContent {

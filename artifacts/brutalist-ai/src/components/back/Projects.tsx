@@ -56,6 +56,19 @@ export function ProjectsBack({ palette }: { palette: Palette }) {
                     {p.year}
                   </span>
                 </div>
+                {p.image && (
+                  <img
+                    src={p.image}
+                    alt=""
+                    className="block w-full mb-1"
+                    style={{
+                      height: 64,
+                      objectFit: 'cover',
+                      border: `2px solid ${palette.ink}`,
+                      imageRendering: 'pixelated',
+                    }}
+                  />
+                )}
                 <div
                   className="font-bold uppercase mb-1"
                   style={{ fontSize: 12 }}
