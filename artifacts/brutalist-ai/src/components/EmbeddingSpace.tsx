@@ -296,21 +296,32 @@ function computeAttnEdges(dots: Dot[]): AttnEdge[] {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Header EPOCH/STEP chip — polled at 5Hz so the chip text updates
-// without forcing the whole panel to re-render at 60fps.
+// Header EPOCH/STEP chip — subscribes directly to the cycle store so
+// the chip text stays exactly in sync with the rendered frame in both
+// live and paused/export mode (essential for deterministic export
+// captures). React only re-renders this tiny <span>, not the whole
+// panel, so the perf cost is negligible.
 // ───────────────────────────────────────────────────────────────────
 
 function CycleHeaderChip({ palette }: { palette: Palette }) {
   const store = useCycleStore();
-  const [, force] = useState(0);
+  const [snap, setSnap] = useState(() => {
+    const c = store.get();
+    return { epoch: c.epoch, step: c.step };
+  });
   useEffect(() => {
-    const id = setInterval(() => force(n => (n + 1) | 0), 200);
-    return () => clearInterval(id);
-  }, []);
-  const c = store.get();
+    const update = () => {
+      const c = store.get();
+      setSnap(prev =>
+        prev.epoch === c.epoch && prev.step === c.step ? prev : { epoch: c.epoch, step: c.step },
+      );
+    };
+    update();
+    return store.subscribe(update);
+  }, [store]);
   return (
     <span style={{ color: palette.bg, opacity: 0.5 }}>
-      EPOCH {c.epoch.toString().padStart(2, '0')} · STEP {c.step.toString().padStart(4, '0')} · N={NUM_DOTS}
+      EPOCH {snap.epoch.toString().padStart(2, '0')} · STEP {snap.step.toString().padStart(4, '0')} · N={NUM_DOTS}
     </span>
   );
 }
@@ -837,6 +848,13 @@ export function EmbeddingSpace({
       }
       lastRawStepRef.current = cycle.rawStep;
       paintFrame();
+      // In paused/export mode there is no 4Hz timer driving ATTN chip
+      // text refreshes, so each scrub step must immediately re-render
+      // chips so the displayed % stays in sync with the painted frame.
+      // Live mode skips this to preserve 60fps (chips update at 4Hz).
+      if (pausedRef.current && modeRef.current === 'attn') {
+        setAttnTick(n => (n + 1) | 0);
+      }
     };
 
     // Process whatever is already in the store on (re-)subscribe so the
