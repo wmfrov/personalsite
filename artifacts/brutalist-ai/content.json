@@ -12,8 +12,17 @@
   "contact": {
     "email": "will@willziegler.com",
     "links": [
-      { "label": "GITHUB",   "value": "@wmfrov",      "href": "https://github.com/wmfrov" },
-      { "label": "LINKEDIN", "value": "in/will-ziegler",    "href": "https://www.linkedin.com/in/will-ziegler/" },
+      {
+        "label": "GITHUB",
+        "value": "@wmfrov",
+        "href": "https://github.com/wmfrov"
+      },
+      {
+        "label": "LINKEDIN",
+        "value": "in/will-ziegler",
+        "href": "https://www.linkedin.com/in/will-ziegler/"
+      }
+    ],
     "availability": "Always interested to hear what's out there"
   },
   "uses": {
@@ -22,35 +31,35 @@
       {
         "title": "EDITOR & SHELL",
         "items": [
-          { "name": "Neovim",        "note": "lazyvim config, telescope, treesitter" },
-          { "name": "Ghostty",       "note": "terminal of choice, GPU-fast" },
-          { "name": "Fish + Starship","note": "shell + prompt" },
-          { "name": "tmux",          "note": "session-per-project" }
+          { "name": "Neovim", "note": "lazyvim config, telescope, treesitter" },
+          { "name": "Ghostty", "note": "terminal of choice, GPU-fast" },
+          { "name": "Fish + Starship", "note": "shell + prompt" },
+          { "name": "tmux", "note": "session-per-project" }
         ]
       },
       {
         "title": "DEV",
         "items": [
-          { "name": "TypeScript",  "note": "default for everything web" },
-          { "name": "Rust",        "note": "for performance-critical parts" },
-          { "name": "Vite",        "note": "frontend build" },
-          { "name": "Postgres",    "note": "primary datastore" }
+          { "name": "TypeScript", "note": "default for everything web" },
+          { "name": "Rust", "note": "for performance-critical parts" },
+          { "name": "Vite", "note": "frontend build" },
+          { "name": "Postgres", "note": "primary datastore" }
         ]
       },
       {
         "title": "DESIGN",
         "items": [
-          { "name": "Figma",        "note": "wireframes & specs" },
-          { "name": "Procreate",    "note": "iPad sketches" },
-          { "name": "IBM Plex Mono","note": "favorite mono typeface" }
+          { "name": "Figma", "note": "wireframes & specs" },
+          { "name": "Procreate", "note": "iPad sketches" },
+          { "name": "IBM Plex Mono", "note": "favorite mono typeface" }
         ]
       },
       {
         "title": "HARDWARE",
         "items": [
           { "name": "M2 MacBook Air", "note": "primary machine" },
-          { "name": "HHKB Pro Hybrid","note": "keyboard" },
-          { "name": "LG 27\" 4K",    "note": "external display" }
+          { "name": "HHKB Pro Hybrid", "note": "keyboard" },
+          { "name": "LG 27\" 4K", "note": "external display" }
         ]
       }
     ]
