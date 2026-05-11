@@ -1,0 +1,106 @@
+{
+  "name": "Your Name",
+  "tagline": "engineer · designer · tinkerer",
+  "about": {
+    "intro": "Hi, I'm Your Name. I build software for a living and tinker with hardware, type, and visual systems for fun.",
+    "paragraphs": [
+      "I work on developer tools and design systems, with a soft spot for low-level rendering and weird interfaces. Most days I'm somewhere between a terminal and a sketchbook.",
+      "Outside of work I shoot 35mm film, ride bikes too far, and read more sci-fi than is strictly necessary."
+    ],
+    "location": "Brooklyn, NY"
+  },
+  "contact": {
+    "email": "you@example.com",
+    "links": [
+      { "label": "GITHUB",   "value": "@yourhandle",      "href": "https://github.com/yourhandle" },
+      { "label": "TWITTER",  "value": "@yourhandle",      "href": "https://twitter.com/yourhandle" },
+      { "label": "BLUESKY",  "value": "@you.bsky.social", "href": "https://bsky.app/profile/you.bsky.social" },
+      { "label": "LINKEDIN", "value": "in/yourhandle",    "href": "https://www.linkedin.com/in/yourhandle" },
+      { "label": "RSS",      "value": "/feed.xml",        "href": "/feed.xml" }
+    ],
+    "availability": "Open to interesting work — drop a note."
+  },
+  "uses": {
+    "intro": "Tools I reach for daily, and a few I just love.",
+    "groups": [
+      {
+        "title": "EDITOR & SHELL",
+        "items": [
+          { "name": "Neovim",        "note": "lazyvim config, telescope, treesitter" },
+          { "name": "Ghostty",       "note": "terminal of choice, GPU-fast" },
+          { "name": "Fish + Starship","note": "shell + prompt" },
+          { "name": "tmux",          "note": "session-per-project" }
+        ]
+      },
+      {
+        "title": "DEV",
+        "items": [
+          { "name": "TypeScript",  "note": "default for everything web" },
+          { "name": "Rust",        "note": "for performance-critical parts" },
+          { "name": "Vite",        "note": "frontend build" },
+          { "name": "Postgres",    "note": "primary datastore" }
+        ]
+      },
+      {
+        "title": "DESIGN",
+        "items": [
+          { "name": "Figma",        "note": "wireframes & specs" },
+          { "name": "Procreate",    "note": "iPad sketches" },
+          { "name": "IBM Plex Mono","note": "favorite mono typeface" }
+        ]
+      },
+      {
+        "title": "HARDWARE",
+        "items": [
+          { "name": "M2 MacBook Air", "note": "primary machine" },
+          { "name": "HHKB Pro Hybrid","note": "keyboard" },
+          { "name": "LG 27\" 4K",    "note": "external display" }
+        ]
+      }
+    ]
+  },
+  "projects": [
+    {
+      "title": "Brutalist AI Dashboard",
+      "blurb": "Generative banner generator that turns any seed string into a deterministic LLM-training visualization.",
+      "tag": "GENERATIVE",
+      "year": "2026",
+      "href": "https://github.com/yourhandle/brutalist-ai"
+    },
+    {
+      "title": "Plotter Studio",
+      "blurb": "SVG-first design tool for AxiDraw pen plotters, with live preview and HPGL export.",
+      "tag": "TOOL",
+      "year": "2025",
+      "href": "https://github.com/yourhandle/plotter-studio"
+    },
+    {
+      "title": "Quiet Reader",
+      "blurb": "Distraction-free RSS reader. Self-hostable, keyboard-first, no tracking.",
+      "tag": "APP",
+      "year": "2025",
+      "href": "https://github.com/yourhandle/quiet-reader"
+    },
+    {
+      "title": "Type Lab",
+      "blurb": "Variable-font playground for testing custom typefaces in real layouts.",
+      "tag": "PLAYGROUND",
+      "year": "2024",
+      "href": "https://github.com/yourhandle/type-lab"
+    },
+    {
+      "title": "Field Notes API",
+      "blurb": "Tiny Rust HTTP server that turns a folder of markdown files into a JSON feed.",
+      "tag": "OSS",
+      "year": "2024",
+      "href": "https://github.com/yourhandle/field-notes-api"
+    },
+    {
+      "title": "Pico Synth",
+      "blurb": "Raspberry Pi Pico-based 4-voice subtractive synth with capacitive-touch keys.",
+      "tag": "HARDWARE",
+      "year": "2023",
+      "href": "https://github.com/yourhandle/pico-synth"
+    }
+  ]
+}

@@ -7,9 +7,17 @@ import { TokenStream } from '../components/TokenStream';
 import { Loss } from '../components/Loss';
 import { Probabilities } from '../components/Probabilities';
 import { ExportModal } from '../components/ExportModal';
+import { FlipPanel } from '../components/FlipPanel';
+import { AboutBack } from '../components/back/About';
+import { ContactBack } from '../components/back/Contact';
+import { ScratchpadBack } from '../components/back/Scratchpad';
+import { UsesBack } from '../components/back/Uses';
+import { ProjectsBack } from '../components/back/Projects';
 import { parseSeed, SeedData } from '../lib/hash';
 import { applyPaletteVars, DEFAULT_PALETTE_ID, getPalette, PALETTES, pickAccent } from '../lib/palettes';
 import { TrainingCycleProvider } from '../contexts/TrainingCycleContext';
+
+type PanelKey = 'token' | 'weights' | 'loss' | 'probs' | 'embedding';
 
 interface ExportState {
   active: boolean;
@@ -108,6 +116,45 @@ export default function Dashboard() {
   }, [stepFrame]);
   // Bumped on entering export mode to remount panels + reset history.
   const [resetKey, setResetKey] = useState(0);
+
+  // Per-panel flip state. Token Stream auto-flips after mount; manual user
+  // interaction with any flip button cancels the schedule for the session.
+  const [flipped, setFlipped] = useState<Record<PanelKey, boolean>>({
+    token: false,
+    weights: false,
+    loss: false,
+    probs: false,
+    embedding: false,
+  });
+  const userFlippedRef = useRef(false);
+  const handleFlip = (key: PanelKey) => {
+    userFlippedRef.current = true;
+    setFlipped(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // Auto-flip schedule for Token Stream: 0.5s after first paint, then toggle
+  // every 7s. Cancelled the moment the user clicks any flip button or when
+  // export mode is engaged.
+  useEffect(() => {
+    if (exportState.active) return;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = setTimeout(() => {
+      if (userFlippedRef.current) return;
+      setFlipped(prev => ({ ...prev, token: !prev.token }));
+      interval = setInterval(() => {
+        if (userFlippedRef.current) {
+          if (interval) clearInterval(interval);
+          interval = null;
+          return;
+        }
+        setFlipped(prev => ({ ...prev, token: !prev.token }));
+      }, 7000);
+    }, 500);
+    return () => {
+      clearTimeout(start);
+      if (interval) clearInterval(interval);
+    };
+  }, [exportState.active]);
 
   // Scrubber range. The slider covers a useful 10-second window at 60fps;
   // the number input lets users go beyond when they want a really late frame.
@@ -231,6 +278,15 @@ export default function Dashboard() {
     setStepFrame(0);
     setResetKey(k => k + 1);
     setBannerZoom(1);
+    // Reset every panel to its front face so the exported PNG always
+    // shows the LLM visualizations, never the personal-site backs.
+    setFlipped({
+      token: false,
+      weights: false,
+      loss: false,
+      probs: false,
+      embedding: false,
+    });
     setExportState({ active: true, w, h });
   };
 
@@ -553,32 +609,74 @@ export default function Dashboard() {
             >
             <div className="w-full h-full flex flex-col md:flex-row gap-4">
               <div className="flex-[2] md:w-[65%] min-w-0 h-1/2 md:h-full">
-                <EmbeddingSpace
-                  key={`emb-${resetKey}`}
-                  seedData={seedData}
+                <FlipPanel
+                  flipped={flipped.embedding}
+                  onFlip={() => handleFlip('embedding')}
                   palette={palette}
-                  accent={accent}
-                  paused={paused}
-                  stepFrame={stepFrame}
+                  disabled={exportState.active}
+                  label="flip to projects"
+                  front={
+                    <EmbeddingSpace
+                      key={`emb-${resetKey}`}
+                      seedData={seedData}
+                      palette={palette}
+                      accent={accent}
+                      paused={paused}
+                      stepFrame={stepFrame}
+                    />
+                  }
+                  back={<ProjectsBack palette={palette} />}
                 />
               </div>
 
               <div className="flex-1 md:w-[35%] flex flex-col gap-4 min-w-0 h-1/2 md:h-full">
                 <div className="flex-1 flex gap-4 min-h-0">
                   <div className="flex-1">
-                    <Weights key={`w-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+                    <FlipPanel
+                      flipped={flipped.weights}
+                      onFlip={() => handleFlip('weights')}
+                      palette={palette}
+                      disabled={exportState.active}
+                      label="flip to contact"
+                      front={<Weights key={`w-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />}
+                      back={<ContactBack palette={palette} />}
+                    />
                   </div>
                   <div className="flex-[1.5]">
-                    <TokenStream key={`t-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+                    <FlipPanel
+                      flipped={flipped.token}
+                      onFlip={() => handleFlip('token')}
+                      palette={palette}
+                      disabled={exportState.active}
+                      label="flip to about"
+                      front={<TokenStream key={`t-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />}
+                      back={<AboutBack palette={palette} />}
+                    />
                   </div>
                 </div>
 
                 <div className="flex-[0.8] min-h-0">
-                  <Loss key={`l-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+                  <FlipPanel
+                    flipped={flipped.loss}
+                    onFlip={() => handleFlip('loss')}
+                    palette={palette}
+                    disabled={exportState.active}
+                    label="flip to scratchpad"
+                    front={<Loss key={`l-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />}
+                    back={<ScratchpadBack palette={palette} />}
+                  />
                 </div>
 
                 <div className="flex-1 min-h-0">
-                  <Probabilities key={`p-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />
+                  <FlipPanel
+                    flipped={flipped.probs}
+                    onFlip={() => handleFlip('probs')}
+                    palette={palette}
+                    disabled={exportState.active}
+                    label="flip to uses"
+                    front={<Probabilities key={`p-${resetKey}`} seedData={seedData} palette={palette} paused={paused} stepFrame={stepFrame} />}
+                    back={<UsesBack palette={palette} />}
+                  />
                 </div>
               </div>
             </div>
