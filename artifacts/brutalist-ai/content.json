@@ -1,24 +1,20 @@
 {
-  "name": "Your Name",
-  "tagline": "engineer · designer · tinkerer",
+  "name": "will ziegler",
+  "tagline": "ai guy | nerd | gamer",
   "about": {
-    "intro": "Hi, I'm Your Name. I build software for a living and tinker with hardware, type, and visual systems for fun.",
+    "intro": "Hi, I'm Will Ziegler. I fix software for a living and break it for fun.",
     "paragraphs": [
-      "I work on developer tools and design systems, with a soft spot for low-level rendering and weird interfaces. Most days I'm somewhere between a terminal and a sketchbook.",
-      "Outside of work I shoot 35mm film, ride bikes too far, and read more sci-fi than is strictly necessary."
+      "I'm a wannabe developer and I like to make things that are fun to look at. I love solving problems, figuring things out, and learning about all kinds of bullshit.",
+      "Outside of work I love games of all sorts, trivia, watching movies, and sightseeing."
     ],
-    "location": "Brooklyn, NY"
+    "location": "Oakland, CA"
   },
   "contact": {
-    "email": "you@example.com",
+    "email": "will@willziegler.com",
     "links": [
-      { "label": "GITHUB",   "value": "@yourhandle",      "href": "https://github.com/yourhandle" },
-      { "label": "TWITTER",  "value": "@yourhandle",      "href": "https://twitter.com/yourhandle" },
-      { "label": "BLUESKY",  "value": "@you.bsky.social", "href": "https://bsky.app/profile/you.bsky.social" },
-      { "label": "LINKEDIN", "value": "in/yourhandle",    "href": "https://www.linkedin.com/in/yourhandle" },
-      { "label": "RSS",      "value": "/feed.xml",        "href": "/feed.xml" }
-    ],
-    "availability": "Open to interesting work — drop a note."
+      { "label": "GITHUB",   "value": "@wmfrov",      "href": "https://github.com/wmfrov" },
+      { "label": "LINKEDIN", "value": "in/will-ziegler",    "href": "https://www.linkedin.com/in/will-ziegler/" },
+    "availability": "Always interested to hear what's out there"
   },
   "uses": {
     "intro": "Tools I reach for daily, and a few I just love.",
