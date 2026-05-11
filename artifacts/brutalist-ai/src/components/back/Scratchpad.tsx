@@ -1,6 +1,6 @@
 import React from 'react';
 import { Palette } from '../../lib/palettes';
-import { scratchpadPosts } from '../../lib/content';
+import { content, scratchpadPosts } from '../../lib/content';
 
 export function ScratchpadBack({ palette }: { palette: Palette }) {
   return (
@@ -15,6 +15,14 @@ export function ScratchpadBack({ palette }: { palette: Palette }) {
         className="flex-1 overflow-auto"
         style={{ background: palette.bg, color: palette.ink }}
       >
+        {content.scratchpad?.intro && (
+          <div
+            className="px-3 pt-2 font-mono"
+            style={{ fontSize: 10.5, opacity: 0.7 }}
+          >
+            {content.scratchpad.intro}
+          </div>
+        )}
         {scratchpadPosts.length === 0 && (
           <div className="p-3 font-mono text-xs opacity-60">No notes yet.</div>
         )}

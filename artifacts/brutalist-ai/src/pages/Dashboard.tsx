@@ -127,8 +127,16 @@ export default function Dashboard() {
     embedding: false,
   });
   const userFlippedRef = useRef(false);
+  // Holds a cleanup function for the active auto-flip schedule so the very
+  // first manual flip can tear it down immediately, instead of waiting for
+  // the next 7s tick.
+  const autoFlipCleanupRef = useRef<(() => void) | null>(null);
   const handleFlip = (key: PanelKey) => {
     userFlippedRef.current = true;
+    if (autoFlipCleanupRef.current) {
+      autoFlipCleanupRef.current();
+      autoFlipCleanupRef.current = null;
+    }
     setFlipped(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
@@ -136,23 +144,26 @@ export default function Dashboard() {
   // every 7s. Cancelled the moment the user clicks any flip button or when
   // export mode is engaged.
   useEffect(() => {
-    if (exportState.active) return;
+    if (exportState.active || userFlippedRef.current) return;
     let interval: ReturnType<typeof setInterval> | null = null;
     const start = setTimeout(() => {
       if (userFlippedRef.current) return;
       setFlipped(prev => ({ ...prev, token: !prev.token }));
       interval = setInterval(() => {
-        if (userFlippedRef.current) {
-          if (interval) clearInterval(interval);
-          interval = null;
-          return;
-        }
         setFlipped(prev => ({ ...prev, token: !prev.token }));
       }, 7000);
     }, 500);
-    return () => {
+    const cleanup = () => {
       clearTimeout(start);
-      if (interval) clearInterval(interval);
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    autoFlipCleanupRef.current = cleanup;
+    return () => {
+      cleanup();
+      autoFlipCleanupRef.current = null;
     };
   }, [exportState.active]);
 

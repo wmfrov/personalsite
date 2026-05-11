@@ -41,6 +41,9 @@ export interface SiteContent {
     intro: string;
     groups: UsesGroup[];
   };
+  scratchpad: {
+    intro: string;
+  };
   projects: Project[];
 }
 

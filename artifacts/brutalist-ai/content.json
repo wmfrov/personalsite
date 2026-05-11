@@ -59,6 +59,9 @@
       }
     ]
   },
+  "scratchpad": {
+    "intro": "Half-formed thoughts and short notes. New ones go in content/scratchpad/ as YYYY-MM-DD-slug.md with a frontmatter title and date."
+  },
   "projects": [
     {
       "title": "Brutalist AI Dashboard",
