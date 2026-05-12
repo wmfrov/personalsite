@@ -11,25 +11,25 @@ export function ContactBack({ palette }: { palette: Palette }) {
         className="p-4 flex-1 flex flex-col font-mono text-sm overflow-auto gap-2"
         style={{ background: palette.bg, color: palette.ink }}
       >
-        <div className="flex items-center gap-2 leading-none">
+        <div className="flex flex-col gap-1 leading-tight">
           <span
-            className="px-1.5 py-0.5 font-bold shrink-0"
+            className="px-1.5 py-0.5 font-bold self-start"
             style={{ background: palette.accent1, color: palette.bg, fontSize: 12 }}
           >
             EMAIL
           </span>
           <a
             href={`mailto:${contact.email}`}
-            className="font-bold ml-auto truncate"
+            className="font-bold break-all"
             style={{ color: palette.ink, fontSize: 13 }}
           >
             {contact.email}
           </a>
         </div>
         {contact.links.map(link => (
-          <div key={link.label} className="flex items-center gap-2 leading-none">
+          <div key={link.label} className="flex flex-col gap-1 leading-tight">
             <span
-              className="px-1.5 py-0.5 font-bold shrink-0"
+              className="px-1.5 py-0.5 font-bold self-start"
               style={{ background: palette.accent1, color: palette.bg, fontSize: 12 }}
             >
               {link.label}
@@ -38,7 +38,7 @@ export function ContactBack({ palette }: { palette: Palette }) {
               href={link.href}
               target="_blank"
               rel="noreferrer"
-              className="font-bold ml-auto truncate"
+              className="font-bold break-all"
               style={{ color: palette.ink, fontSize: 13 }}
             >
               {link.value}
