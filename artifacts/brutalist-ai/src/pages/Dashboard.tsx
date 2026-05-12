@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Footer } from '../components/Footer';
+import { AboutModal } from '../components/AboutModal';
 import { EmbeddingSpace } from '../components/EmbeddingSpace';
 import { Weights } from '../components/Weights';
 import { TokenStream } from '../components/TokenStream';
@@ -80,6 +81,7 @@ export default function Dashboard() {
   const palette = getPalette(paletteId);
 
   const [hideChrome, setHideChrome] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   // Per-panel flip state. Token Stream auto-flips after mount; manual user
   // interaction with any flip button cancels the schedule for the session.
@@ -159,6 +161,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't fire global single-key shortcuts while the About modal is open —
+      // it owns its own ESC handler and tab focus trap.
+      if (aboutOpen) return;
       const tag = (document.activeElement?.tagName ?? '').toUpperCase();
       const typing = tag === 'INPUT' || tag === 'TEXTAREA';
 
@@ -181,7 +186,7 @@ export default function Dashboard() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [aboutOpen]);
 
   if (!seedData) return null;
 
@@ -311,8 +316,11 @@ export default function Dashboard() {
           seedData={seedData}
           palette={palette}
           setPalette={setPaletteId}
+          aboutOpen={aboutOpen}
+          setAboutOpen={setAboutOpen}
         />
       </div>
+      <AboutModal open={aboutOpen} setOpen={setAboutOpen} />
     </div>
   );
 }

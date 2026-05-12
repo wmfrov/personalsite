@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { SeedData } from '../lib/hash';
 import { Palette } from '../lib/palettes';
 import { PalettePicker } from './PalettePicker';
+import { AboutButton } from './AboutModal';
 
 interface FooterProps {
   seed: string;
@@ -9,9 +10,11 @@ interface FooterProps {
   seedData: SeedData | null;
   palette: Palette;
   setPalette: (id: string) => void;
+  aboutOpen: boolean;
+  setAboutOpen: (open: boolean) => void;
 }
 
-export function Footer({ seed, setSeed, seedData, palette, setPalette }: FooterProps) {
+export function Footer({ seed, setSeed, seedData, palette, setPalette, aboutOpen, setAboutOpen }: FooterProps) {
   const [draft, setDraft] = useState(seed);
 
   useEffect(() => {
@@ -31,10 +34,10 @@ export function Footer({ seed, setSeed, seedData, palette, setPalette }: FooterP
         borderTop: '3px solid var(--ink)',
       }}
     >
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-1.5 shrink-0">
         <span className="font-bold uppercase tracking-widest text-xs">SEED:</span>
         <span
-          className="px-2 py-1 text-xs font-bold font-mono"
+          className="px-1.5 py-1 text-xs font-bold font-mono"
           style={{ background: 'var(--ink)', color: 'var(--bg)' }}
         >
           {seedData?.hash ? seedData.hash.substring(0, 6) + '...' : '......'}
@@ -48,7 +51,7 @@ export function Footer({ seed, setSeed, seedData, palette, setPalette }: FooterP
           e.preventDefault();
           commit();
         }}
-        className="flex items-center gap-2 flex-1 min-w-[180px]"
+        className="flex items-center gap-2 flex-1 min-w-[140px]"
       >
         <input
           type="text"
@@ -65,10 +68,12 @@ export function Footer({ seed, setSeed, seedData, palette, setPalette }: FooterP
           placeholder="ENTER SEED"
           aria-label="Seed input — press Enter to regenerate"
         />
-        <span className="hidden sm:inline text-[10px] uppercase tracking-widest font-bold select-none opacity-60">
+        <span className="hidden lg:inline text-[10px] uppercase tracking-widest font-bold select-none opacity-60">
           ↵ ENTER
         </span>
       </form>
+
+      <AboutButton open={aboutOpen} setOpen={setAboutOpen} />
     </div>
   );
 }
