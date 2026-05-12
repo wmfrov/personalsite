@@ -26,6 +26,7 @@ const TRAIL_LIFETIME_MS = 900;
 // re-randomization).
 const HOME_SIGMA = 0.11;
 const JITTER_AMP = 0.006;
+const YOU_JITTER_AMP = 0.0024;
 const SNAP_PERIOD_STEPS = 120;
 const TAU = Math.PI * 2;
 
@@ -415,8 +416,8 @@ export function EmbeddingSpace({
       disperseFromY: seedData.youY,
       clusterCentroidX: seedData.youX,
       clusterCentroidY: seedData.youY,
-      jitterPhaseX: 0,
-      jitterPhaseY: 0,
+      jitterPhaseX: ((seedData.panelSeeds[PanelSlot.EmbeddingLayout] ?? seedData.seedInt) & 0xffff) / 0xffff * TAU,
+      jitterPhaseY: (((seedData.panelSeeds[PanelSlot.EmbeddingLayout] ?? seedData.seedInt) >>> 16) & 0xffff) / 0xffff * TAU,
       svx: 0,
       svy: 0,
     });
@@ -569,6 +570,11 @@ export function EmbeddingSpace({
         const jy = JITTER_AMP * Math.cos(sStep * 0.05 + dot.jitterPhaseY);
         dot.baseX = Math.max(0, Math.min(1, easedX + jx));
         dot.baseY = Math.max(0, Math.min(1, easedY + jy));
+      } else {
+        const jx = YOU_JITTER_AMP * Math.sin(sStep * 0.04 + dot.jitterPhaseX);
+        const jy = YOU_JITTER_AMP * Math.cos(sStep * 0.05 + dot.jitterPhaseY);
+        dot.baseX = Math.max(0, Math.min(1, dot.homeX + jx));
+        dot.baseY = Math.max(0, Math.min(1, dot.homeY + jy));
       }
 
       if (mouseActive && containerRect) {
