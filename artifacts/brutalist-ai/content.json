@@ -48,7 +48,7 @@
       "blurb": "Wallpaper site using Bing.com images with added filter and image tagging. Hosted on github pages and deployed automatically with github actions",
       "tag": "vibecoded",
       "year": "2026",
-      "href": "https://wmfrov.github.io/wallbing/"
+      "href": "https://github.com/wmfrov/wallbing"
     }
   ]
 }
