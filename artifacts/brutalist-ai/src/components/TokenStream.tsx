@@ -96,21 +96,59 @@ export function TokenStream({ seedData, palette }: TokenStreamProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedData]);
 
+  // The Token Stream box always uses palette.ink as its background (cream-on-dark
+  // becomes cream-on-cream in the inverted palette). For the inverted palette,
+  // the raw accent values and palette.bg are too light against that cream,
+  // so substitute darker on-cream variants. Non-inverted palettes keep their
+  // original colors via the short-circuit on palette.inverted.
+  type TokenRole = 'default' | 'prompt' | 'divider' | 'caret' | 'a1' | 'a2' | 'a3';
+  const onCream = (role: TokenRole): string => {
+    if (!palette.inverted) {
+      switch (role) {
+        case 'default':
+        case 'caret':
+          return palette.bg;
+        case 'prompt':
+        case 'divider':
+        case 'a3':
+          return palette.accent3;
+        case 'a1':
+          return palette.accent1;
+        case 'a2':
+          return palette.accent2;
+      }
+    }
+    // Inverted palette: cream background, need dark/saturated colors.
+    switch (role) {
+      case 'default':
+      case 'caret':
+        return '#0e0e0e';
+      case 'a1':
+        return '#c43a1a'; // deeper orange (vs #ff5a36)
+      case 'a2':
+        return '#1f7a48'; // deeper mint (vs #7be0a3)
+      case 'a3':
+      case 'prompt':
+      case 'divider':
+        return '#8a6500'; // deeper amber (vs #ffd166)
+    }
+  };
+
   const renderToken = (tok: string, i: number) => {
     if (tok.startsWith(EPOCH_DIVIDER_PREFIX)) {
       // Pull the epoch number out of the marker for the rendered divider.
       const n = tok.slice(EPOCH_DIVIDER_PREFIX.length, -1);
       return (
-        <span key={i} style={{ color: palette.accent3, display: 'block', opacity: 0.85 }}>
+        <span key={i} style={{ color: onCream('divider'), display: 'block', opacity: 0.85 }}>
           {`─── epoch ${n} ───`}
         </span>
       );
     }
-    let color = palette.bg;
-    if (tok.startsWith('▁')) color = palette.accent3;
-    else if (tok.startsWith('##')) color = palette.accent1;
-    else if (tok.startsWith('<') && tok.endsWith('>')) color = palette.accent2;
-    else if (tok.startsWith('t_') || tok.startsWith('tok_')) color = palette.accent2;
+    let color = onCream('default');
+    if (tok.startsWith('▁')) color = onCream('a3');
+    else if (tok.startsWith('##')) color = onCream('a1');
+    else if (tok.startsWith('<') && tok.endsWith('>')) color = onCream('a2');
+    else if (tok.startsWith('t_') || tok.startsWith('tok_')) color = onCream('a2');
 
     return (
       <span key={i} style={{ color }}>
@@ -132,9 +170,9 @@ export function TokenStream({ seedData, palette }: TokenStreamProps) {
         className="p-4 flex-1 font-mono text-sm leading-relaxed overflow-hidden break-words"
         style={{ background: palette.ink, color: palette.bg }}
       >
-        <span style={{ color: palette.accent3 }}>{`> `}</span>
+        <span style={{ color: onCream('prompt') }}>{`> `}</span>
         {visibleTokens.map(renderToken)}
-        <span className="caret-blink" style={{ color: palette.bg }}>█</span>
+        <span className="caret-blink" style={{ color: onCream('caret') }}>█</span>
       </div>
     </div>
   );

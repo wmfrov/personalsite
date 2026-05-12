@@ -1110,7 +1110,12 @@ export function EmbeddingSpace({
                   className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-1 select-none font-mono text-xs font-bold"
                   style={{
                     backgroundColor: useAccentChip ? accent : isHovered || isNeighbor ? palette.ink : palette.bg,
-                    color: useAccentChip ? palette.ink : isHovered || isNeighbor ? palette.bg : palette.ink,
+                    // In the inverted palette, palette.ink is light cream and the
+                    // accents are also light, so light-on-accent vanishes. Use the
+                    // dark palette.bg as chip text color in that case.
+                    color: useAccentChip
+                      ? (palette.inverted ? palette.bg : palette.ink)
+                      : isHovered || isNeighbor ? palette.bg : palette.ink,
                     transform: isHovered || isNeighbor ? 'scale(1.15)' : 'scale(1)',
                     transformOrigin: 'left center',
                     border: useAccentChip ? `2px solid ${palette.ink}` : dot.pinned ? `1px solid ${palette.ink}` : 'none',
@@ -1127,7 +1132,7 @@ export function EmbeddingSpace({
                     fontSize: 10,
                     lineHeight: 1.1,
                     backgroundColor: accent,
-                    color: palette.ink,
+                    color: palette.inverted ? palette.bg : palette.ink,
                     border: `1.5px solid ${palette.ink}`,
                   }}
                 >
