@@ -32,12 +32,6 @@
         "title": "coming soon",
       }
     ]
-    ],
-   
-  
-  "uses": {
-    "intro": "coming soon"
-    
 
   },
   "scratchpad": {
@@ -51,7 +45,5 @@
       "year": "2026",
       "href": "https://github.com/yourhandle/brutalist-ai"
     }
-    },
-    
   ]
 }
