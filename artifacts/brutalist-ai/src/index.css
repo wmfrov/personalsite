@@ -101,3 +101,82 @@
 @keyframes blink {
   50% { opacity: 0; }
 }
+
+/*
+ * Visually hidden — content kept available to screen readers but
+ * removed from the visual layout. Used for the skip-to-content link
+ * and any other a11y-only labels.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Skip link — invisible until it receives keyboard focus. When focused,
+ * it parks at the top-left as a brutalist chip so keyboard users can
+ * jump past the chrome to the dashboard content.
+ */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -100px;
+  z-index: 1000;
+  padding: 8px 12px;
+  background: var(--ink);
+  color: var(--bg);
+  border: 3px solid var(--ink);
+  box-shadow: var(--shadow-brutal);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+.skip-link:focus {
+  top: 8px;
+  outline: none;
+}
+
+/*
+ * Focus rings — visible only on keyboard focus. Match the brutalist
+ * stack (double-stroke ring) so they read as "selected" without
+ * altering the resting design.
+ */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/*
+ * Flip transition lives on a class so a media query can override it
+ * for users who prefer reduced motion. Inline `transition: ...` on
+ * the FlipPanel can't be overridden by CSS, so we expose the
+ * duration as a CSS variable instead.
+ */
+.flip-inner {
+  transition: transform var(--flip-duration, 600ms) cubic-bezier(.2, .8, .2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Collapse decorative motion site-wide without changing layout. */
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  :root {
+    --flip-duration: 0.001ms;
+  }
+}

@@ -74,6 +74,10 @@ function ProjectCard({
         <img
           src={p.image}
           alt=""
+          width={240}
+          height={80}
+          loading="lazy"
+          decoding="async"
           className="block w-full mb-2"
           style={{
             height: 80,

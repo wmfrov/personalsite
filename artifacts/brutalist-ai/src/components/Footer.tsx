@@ -26,7 +26,9 @@ export function Footer({ seed, setSeed, seedData, palette, setPalette, aboutOpen
   };
 
   return (
-    <div
+    <footer
+      role="contentinfo"
+      aria-label="Site controls"
       className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-3 px-3 py-2 flex-wrap"
       style={{
         background: 'var(--bg)',
@@ -35,10 +37,11 @@ export function Footer({ seed, setSeed, seedData, palette, setPalette, aboutOpen
       }}
     >
       <div className="flex items-center gap-1.5 shrink-0">
-        <span className="font-bold uppercase tracking-widest text-xs">SEED:</span>
+        <span className="font-bold uppercase tracking-widest text-xs" aria-hidden="true">SEED:</span>
         <span
           className="px-1.5 py-1 text-xs font-bold font-mono"
           style={{ background: 'var(--ink)', color: 'var(--bg)' }}
+          aria-label={`Current seed hash ${seedData?.hash ? seedData.hash.substring(0, 6) : 'pending'}`}
         >
           {seedData?.hash ? seedData.hash.substring(0, 6) + '...' : '......'}
         </span>
@@ -68,12 +71,12 @@ export function Footer({ seed, setSeed, seedData, palette, setPalette, aboutOpen
           placeholder="ENTER SEED"
           aria-label="Seed input — press Enter to regenerate"
         />
-        <span className="hidden lg:inline text-[10px] uppercase tracking-widest font-bold select-none opacity-60">
+        <span aria-hidden="true" className="hidden lg:inline text-[10px] uppercase tracking-widest font-bold select-none opacity-60">
           ↵ ENTER
         </span>
       </form>
 
       <AboutButton open={aboutOpen} setOpen={setAboutOpen} />
-    </div>
+    </footer>
   );
 }

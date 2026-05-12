@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Footer } from '../components/Footer';
 import { AboutModal } from '../components/AboutModal';
 import { EmbeddingSpace } from '../components/EmbeddingSpace';
@@ -7,12 +7,31 @@ import { TokenStream } from '../components/TokenStream';
 import { Loss } from '../components/Loss';
 import { Probabilities } from '../components/Probabilities';
 import { FlipPanel } from '../components/FlipPanel';
-import { AboutBack } from '../components/back/About';
-import { ContactBack } from '../components/back/Contact';
-import { ScratchpadBack } from '../components/back/Scratchpad';
-import { UsesBack } from '../components/back/Uses';
-import { ProjectsBack } from '../components/back/Projects';
 import { parseSeed, SeedData } from '../lib/hash';
+
+/*
+ * Lazy-load the back faces of every flip panel. They're hidden on the
+ * initial paint (panels open front-side first), so deferring their JS
+ * — including the markdown-heavy Scratchpad and the Projects grid —
+ * shrinks the initial bundle without changing what the user sees.
+ * Suspense uses a `null` fallback so the back face stays empty until
+ * the chunk resolves, exactly like before.
+ */
+const AboutBack = lazy(() =>
+  import('../components/back/About').then(m => ({ default: m.AboutBack })),
+);
+const ContactBack = lazy(() =>
+  import('../components/back/Contact').then(m => ({ default: m.ContactBack })),
+);
+const ScratchpadBack = lazy(() =>
+  import('../components/back/Scratchpad').then(m => ({ default: m.ScratchpadBack })),
+);
+const UsesBack = lazy(() =>
+  import('../components/back/Uses').then(m => ({ default: m.UsesBack })),
+);
+const ProjectsBack = lazy(() =>
+  import('../components/back/Projects').then(m => ({ default: m.ProjectsBack })),
+);
 import { applyPaletteVars, DEFAULT_PALETTE_ID, getPalette, PALETTES, pickAccent } from '../lib/palettes';
 import { TrainingCycleProvider } from '../contexts/TrainingCycleContext';
 
@@ -192,12 +211,19 @@ export default function Dashboard() {
 
   const accent = pickAccent(palette, seedData.accentIndex);
 
+  // Wrap each lazy back face in Suspense with a `null` fallback so the
+  // hidden back stays empty (same as before) while its chunk loads.
+  const lazyBack = (node: React.ReactNode) => (
+    <Suspense fallback={null}>{node}</Suspense>
+  );
+
   const embeddingPanel = (
     <FlipPanel
       flipped={flipped.embedding}
       onFlip={() => handleFlip('embedding')}
       palette={palette}
       label="flip to projects"
+      regionLabel="Embedding space — flip to projects"
       front={
         <EmbeddingSpace
           seedData={seedData}
@@ -205,7 +231,7 @@ export default function Dashboard() {
           accent={accent}
         />
       }
-      back={<ProjectsBack palette={palette} />}
+      back={lazyBack(<ProjectsBack palette={palette} />)}
     />
   );
 
@@ -215,8 +241,9 @@ export default function Dashboard() {
       onFlip={() => handleFlip('weights')}
       palette={palette}
       label="flip to contact"
+      regionLabel="Weights — flip to contact"
       front={<Weights seedData={seedData} palette={palette} />}
-      back={<ContactBack palette={palette} />}
+      back={lazyBack(<ContactBack palette={palette} />)}
     />
   );
 
@@ -226,8 +253,9 @@ export default function Dashboard() {
       onFlip={() => handleFlip('token')}
       palette={palette}
       label="flip to about"
+      regionLabel="Token stream — flip to about"
       front={<TokenStream seedData={seedData} palette={palette} />}
-      back={<AboutBack palette={palette} />}
+      back={lazyBack(<AboutBack palette={palette} />)}
     />
   );
 
@@ -237,8 +265,9 @@ export default function Dashboard() {
       onFlip={() => handleFlip('loss')}
       palette={palette}
       label="flip to scratchpad"
+      regionLabel="Loss curve — flip to scratchpad"
       front={<Loss seedData={seedData} palette={palette} />}
-      back={<ScratchpadBack palette={palette} />}
+      back={lazyBack(<ScratchpadBack palette={palette} />)}
     />
   );
 
@@ -248,8 +277,9 @@ export default function Dashboard() {
       onFlip={() => handleFlip('probs')}
       palette={palette}
       label="flip to uses"
+      regionLabel="Probabilities — flip to uses"
       front={<Probabilities seedData={seedData} palette={palette} />}
-      back={<UsesBack palette={palette} />}
+      back={lazyBack(<UsesBack palette={palette} />)}
     />
   );
 
@@ -258,6 +288,7 @@ export default function Dashboard() {
       className="min-h-screen flex flex-col font-mono relative"
       style={{ background: 'var(--bg)', color: 'var(--ink)' }}
     >
+      <a href="#main" className="skip-link">Skip to content</a>
       <TrainingCycleProvider resetKey={seedData.hash}>
         {/*
           Layout:
@@ -267,7 +298,9 @@ export default function Dashboard() {
           - Desktop (md+): the original 2-column layout, sized to the
             viewport minus the sticky footer.
         */}
-        <div
+        <main
+          id="main"
+          aria-label="Brutalist AI dashboard"
           className="w-full p-4 pb-[88px] md:pb-[72px] flex flex-col gap-4
                      md:h-screen md:overflow-hidden"
         >
@@ -304,7 +337,7 @@ export default function Dashboard() {
               <div className="h-[60vh]">{probsPanel}</div>
             </div>
           )}
-        </div>
+        </main>
       </TrainingCycleProvider>
 
       <div

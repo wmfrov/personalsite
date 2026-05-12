@@ -3,11 +3,100 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
-    <title>willziegler.com</title>
+    <title>Will Ziegler — Brutalist AI Dashboard</title>
+    <meta
+      name="description"
+      content="Will Ziegler's personal site — a deterministic brutalist dashboard that visualises a tiny imaginary language model training in real time."
+    />
+    <link rel="canonical" href="https://willziegler.com/" />
+    <meta name="theme-color" content="#eeefe9" />
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet">
+
+    <!-- Open Graph / social previews -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="willziegler.com" />
+    <meta property="og:title" content="Will Ziegler — Brutalist AI Dashboard" />
+    <meta
+      property="og:description"
+      content="A deterministic brutalist dashboard visualising a tiny imaginary language model training in real time."
+    />
+    <meta property="og:url" content="https://willziegler.com/" />
+    <meta property="og:image" content="https://willziegler.com/opengraph.jpg" />
+    <meta property="og:image:secure_url" content="https://willziegler.com/opengraph.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Brutalist AI dashboard with a token stream, weights, loss curve, probabilities, and an embedding space."
+    />
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Will Ziegler — Brutalist AI Dashboard" />
+    <meta
+      name="twitter:description"
+      content="A deterministic brutalist dashboard visualising a tiny imaginary language model training in real time."
+    />
+    <meta name="twitter:image" content="https://willziegler.com/opengraph.jpg" />
+    <meta
+      name="twitter:image:alt"
+      content="Brutalist AI dashboard with a token stream, weights, loss curve, probabilities, and an embedding space."
+    />
+
+    <!-- JSON-LD: Person + WebSite -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://willziegler.com/#website",
+            "url": "https://willziegler.com/",
+            "name": "willziegler.com",
+            "description": "Will Ziegler's personal site — a deterministic brutalist dashboard that visualises a tiny imaginary language model training in real time.",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "Person",
+            "@id": "https://willziegler.com/#person",
+            "name": "Will Ziegler",
+            "url": "https://willziegler.com/",
+            "jobTitle": "Support @ Replit",
+            "sameAs": [
+              "https://github.com/wmfrov",
+              "https://www.linkedin.com/in/will-ziegler/"
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <!--
+      Fonts: load IBM Plex Mono without blocking the first paint. We
+      preconnect, then fetch the stylesheet via the print-media swap
+      trick so the browser doesn't block render on it. A <noscript>
+      fallback keeps the font usable when JS is off.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
+    />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
+      />
+    </noscript>
   </head>
   <body>
     <div id="root"></div>

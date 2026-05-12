@@ -9,6 +9,8 @@ interface FlipPanelProps {
   back: React.ReactNode;
   /** Optional aria/title for the flip button. */
   label?: string;
+  /** Optional aria-label for the surrounding region. */
+  regionLabel?: string;
 }
 
 export function FlipPanel({
@@ -18,17 +20,18 @@ export function FlipPanel({
   front,
   back,
   label = 'flip panel',
+  regionLabel,
 }: FlipPanelProps) {
   return (
-    <div
+    <section
       className="relative h-full w-full"
       style={{ perspective: 1400 }}
+      aria-label={regionLabel}
     >
       <div
-        className="relative h-full w-full"
+        className="flip-inner relative h-full w-full"
         style={{
           transformStyle: 'preserve-3d',
-          transition: 'transform 600ms cubic-bezier(.2,.8,.2,1)',
           transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
         }}
       >
@@ -41,7 +44,7 @@ export function FlipPanel({
           <FlipButton onClick={onFlip} palette={palette} label={label} />
         </Face>
       </div>
-    </div>
+    </section>
   );
 }
 
