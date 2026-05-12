@@ -24,6 +24,13 @@ import { CycleState, computeCycle } from '../lib/trainingCycle';
 
 const VIRTUAL_FPS = 60;
 const MS_PER_VIRTUAL_STEP = 1000 / VIRTUAL_FPS;
+// Cap how many virtual steps a single rAF can advance. Browsers throttle
+// (or freeze) rAF in background tabs; on resume, a naive elapsed-time
+// integrator could produce a huge delta and force EmbeddingSpace to run
+// thousands of physics steps in one frame. Capping at MAX_CATCHUP_STEPS
+// (~1s of virtual time) lets the cycle catch up smoothly across the
+// next several frames instead of hitching once.
+const MAX_CATCHUP_STEPS = VIRTUAL_FPS;
 
 interface CycleStore {
   get(): CycleState;
@@ -114,8 +121,16 @@ export function TrainingCycleProvider({
     liveStartMsRef.current = startMs;
     const tick = (now: number) => {
       const elapsed = now - liveStartMsRef.current;
-      const next = Math.max(rawStepRef.current, Math.floor(elapsed / MS_PER_VIRTUAL_STEP));
+      const target = Math.floor(elapsed / MS_PER_VIRTUAL_STEP);
+      const capped = Math.min(target, rawStepRef.current + MAX_CATCHUP_STEPS);
+      const next = Math.max(rawStepRef.current, capped);
       if (next !== rawStepRef.current) {
+        // If we hit the catch-up cap (e.g. resuming from a backgrounded
+        // tab), shift liveStartMs forward so subsequent frames don't
+        // immediately re-saturate the cap and create a long burst.
+        if (target > next) {
+          liveStartMsRef.current = now - next * MS_PER_VIRTUAL_STEP;
+        }
         rawStepRef.current = next;
         publish(next);
       } else {
