@@ -33,6 +33,25 @@ export function pickAccent(palette: Palette, idx: 0 | 1 | 2): string {
   return [palette.accent1, palette.accent2, palette.accent3][idx];
 }
 
+// Accent variants intended to sit on top of `palette.ink` (the
+// brutalist-label background). For most palettes, ink is dark and the
+// raw accents already pass WCAG AA against it. The INVERTED palette
+// flips ink to cream, so its bright accents (#ff5a36 / #7be0a3 /
+// #ffd166) drop to 1.2–2.7:1 against that cream — not legible. These
+// substitutes are deeper variants in the same color family chosen to
+// clear 5:1 against #eeefe9 while still reading as the palette's
+// signature hue.
+const INVERTED_ON_INK_ACCENTS: readonly [string, string, string] = [
+  '#a82e15', // accent1: deeper orange (vs #ff5a36) — 5.92:1 on cream
+  '#176c3d', // accent2: deeper mint   (vs #7be0a3) — 5.59:1 on cream
+  '#7a5a00', // accent3: deeper amber  (vs #ffd166) — 5.52:1 on cream
+];
+
+export function accentOnInk(palette: Palette, idx: 0 | 1 | 2): string {
+  if (palette.inverted) return INVERTED_ON_INK_ACCENTS[idx];
+  return pickAccent(palette, idx);
+}
+
 export function applyPaletteVars(el: HTMLElement | null, palette: Palette) {
   if (!el) return;
   el.style.setProperty('--bg', palette.bg);

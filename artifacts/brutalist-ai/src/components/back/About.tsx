@@ -1,5 +1,5 @@
 import React from 'react';
-import { Palette } from '../../lib/palettes';
+import { Palette, accentOnInk } from '../../lib/palettes';
 import { content } from '../../lib/content';
 
 export function AboutBack({ palette }: { palette: Palette }) {
@@ -8,7 +8,7 @@ export function AboutBack({ palette }: { palette: Palette }) {
     <div className="brutalist-panel h-full flex flex-col min-h-0">
       <div className="brutalist-label shrink-0 flex justify-between">
         <span>ABOUT</span>
-        <span style={{ color: palette.accent3 }}>● HELLO</span>
+        <span style={{ color: accentOnInk(palette, 2) }}>● HELLO</span>
       </div>
       <div
         className="p-4 flex-1 font-mono text-sm leading-relaxed overflow-auto"

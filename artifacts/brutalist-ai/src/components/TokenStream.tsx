@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
-import { Palette } from '../lib/palettes';
+import { Palette, accentOnInk } from '../lib/palettes';
 import { generateMixedToken } from '../lib/tokens';
 import { useCycleStore } from '../contexts/TrainingCycleContext';
 
@@ -118,19 +118,22 @@ export function TokenStream({ seedData, palette }: TokenStreamProps) {
           return palette.accent2;
       }
     }
-    // Inverted palette: cream background, need dark/saturated colors.
+    // Inverted palette: cream background. Reuse the shared
+    // `accentOnInk` deeper-accent table so this remap stays in sync with
+    // every other "accent on cream ink" surface (e.g. the REC indicator
+    // on the panel label, the HELLO chip on the About back).
     switch (role) {
       case 'default':
       case 'caret':
         return '#0e0e0e';
       case 'a1':
-        return '#c43a1a'; // deeper orange (vs #ff5a36)
+        return accentOnInk(palette, 0);
       case 'a2':
-        return '#1f7a48'; // deeper mint (vs #7be0a3)
+        return accentOnInk(palette, 1);
       case 'a3':
       case 'prompt':
       case 'divider':
-        return '#8a6500'; // deeper amber (vs #ffd166)
+        return accentOnInk(palette, 2);
     }
   };
 
@@ -161,7 +164,7 @@ export function TokenStream({ seedData, palette }: TokenStreamProps) {
     <div className="brutalist-panel h-full flex flex-col min-h-0">
       <div className="brutalist-label shrink-0 flex justify-between">
         <span>TOKEN STREAM</span>
-        <span className="animate-pulse" style={{ color: palette.accent1 }}>
+        <span className="animate-pulse" style={{ color: accentOnInk(palette, 0) }}>
           ● REC
         </span>
       </div>
