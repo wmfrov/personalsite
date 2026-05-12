@@ -1,11 +1,11 @@
 {
   "name": "will ziegler",
-  "tagline": "ai guy | nerd | gamer",
+  "tagline": "support @ replit · learning to build",
   "about": {
-    "intro": "Hi, I'm Will Ziegler. I fix software for a living and break it for fun.",
+    "intro": "Hi, I'm Will. I fix software for a living and break it for fun.",
     "paragraphs": [
-      "I'm a wannabe developer and I like to make things that are fun to look at. I love solving problems, figuring things out, and learning about all kinds of bullshit.",
-      "Outside of work I love games of all sorts, trivia, watching movies, and sightseeing."
+      "Outside of work I make small things for fun (this site is one of them), play games of all sorts, do trivia, watch movies, and travel when I can.",
+      "I'm slowly working my way toward building this stuff for a living instead of supporting it."
     ],
     "location": "Oakland, CA"
   },
@@ -33,7 +33,7 @@
         "items": [
           { "name": "light mode > ", "note": "dark mode hurts my eyes" },
           { "name": "java is fine", "note": "and more people use it than you think" },
-          { "name": "AI is actually good", "note": "you just have to use it right" },
+          { "name": "AI is actually amazing", "note": "when you use it right" },
           { "name": "it's ok to be cringe", "note": "it's fun too" }
         ]
       }
