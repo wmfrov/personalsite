@@ -18,6 +18,31 @@ import { TrainingCycleProvider } from '../contexts/TrainingCycleContext';
 type PanelKey = 'token' | 'weights' | 'loss' | 'probs' | 'embedding';
 
 /**
+ * Track a CSS media query so we can render either the mobile or the desktop
+ * layout — but never both at once. Mounting both layouts via `display: none`
+ * would instantiate every panel (including the heavy EmbeddingSpace canvas)
+ * twice, doubling subscriptions and animation work.
+ */
+function useMediaQuery(query: string): boolean {
+  const getMatch = () =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia(query).matches
+      : false;
+  const [matches, setMatches] = useState<boolean>(getMatch);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+    const mql = window.matchMedia(query);
+    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches);
+    setMatches(mql.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
+/**
  * URL hash format: `#<encoded-seed>|<paletteId>`. Backward-compatible — if no
  * `|` is present (old links) the whole hash is treated as the seed and the
  * default palette is used. Encoded seeds never contain a literal `|` because
@@ -47,6 +72,7 @@ function parseHash(raw: string): { seed: string | null; paletteId: string } {
 }
 
 export default function Dashboard() {
+  const isDesktop = useMediaQuery('(min-width: 768px)');
   const [seed, setSeed] = useState('willziegler.com');
   const [seedData, setSeedData] = useState<SeedData | null>(null);
   const [paletteId, setPaletteId] = useState<string>(DEFAULT_PALETTE_ID);
@@ -161,6 +187,67 @@ export default function Dashboard() {
 
   const accent = pickAccent(palette, seedData.accentIndex);
 
+  const embeddingPanel = (
+    <FlipPanel
+      flipped={flipped.embedding}
+      onFlip={() => handleFlip('embedding')}
+      palette={palette}
+      label="flip to projects"
+      front={
+        <EmbeddingSpace
+          seedData={seedData}
+          palette={palette}
+          accent={accent}
+        />
+      }
+      back={<ProjectsBack palette={palette} />}
+    />
+  );
+
+  const weightsPanel = (
+    <FlipPanel
+      flipped={flipped.weights}
+      onFlip={() => handleFlip('weights')}
+      palette={palette}
+      label="flip to contact"
+      front={<Weights seedData={seedData} palette={palette} />}
+      back={<ContactBack palette={palette} />}
+    />
+  );
+
+  const tokenPanel = (
+    <FlipPanel
+      flipped={flipped.token}
+      onFlip={() => handleFlip('token')}
+      palette={palette}
+      label="flip to about"
+      front={<TokenStream seedData={seedData} palette={palette} />}
+      back={<AboutBack palette={palette} />}
+    />
+  );
+
+  const lossPanel = (
+    <FlipPanel
+      flipped={flipped.loss}
+      onFlip={() => handleFlip('loss')}
+      palette={palette}
+      label="flip to scratchpad"
+      front={<Loss seedData={seedData} palette={palette} />}
+      back={<ScratchpadBack palette={palette} />}
+    />
+  );
+
+  const probsPanel = (
+    <FlipPanel
+      flipped={flipped.probs}
+      onFlip={() => handleFlip('probs')}
+      palette={palette}
+      label="flip to uses"
+      front={<Probabilities seedData={seedData} palette={palette} />}
+      back={<UsesBack palette={palette} />}
+    />
+  );
+
   return (
     <div
       className="min-h-screen flex flex-col font-mono relative"
@@ -179,71 +266,39 @@ export default function Dashboard() {
           className="w-full p-4 pb-[88px] md:pb-[72px] flex flex-col gap-4
                      md:h-screen md:overflow-hidden"
         >
-          <div className="flex-1 min-h-0 w-full flex flex-col md:flex-row gap-4">
-            <div className="md:flex-[2] md:w-[65%] min-w-0 h-[70vh] md:h-full">
-              <FlipPanel
-                flipped={flipped.embedding}
-                onFlip={() => handleFlip('embedding')}
-                palette={palette}
-                label="flip to projects"
-                front={
-                  <EmbeddingSpace
-                    seedData={seedData}
-                    palette={palette}
-                    accent={accent}
-                  />
-                }
-                back={<ProjectsBack palette={palette} />}
-              />
-            </div>
-
-            <div className="md:flex-1 md:w-[35%] flex flex-col gap-4 min-w-0 md:h-full">
-              <div className="flex flex-col md:flex-row gap-4 md:flex-1 md:min-h-0">
-                <div className="md:flex-1 h-[60vh] md:h-auto">
-                  <FlipPanel
-                    flipped={flipped.weights}
-                    onFlip={() => handleFlip('weights')}
-                    palette={palette}
-                    label="flip to contact"
-                    front={<Weights seedData={seedData} palette={palette} />}
-                    back={<ContactBack palette={palette} />}
-                  />
-                </div>
-                <div className="md:flex-[1.5] h-[60vh] md:h-auto">
-                  <FlipPanel
-                    flipped={flipped.token}
-                    onFlip={() => handleFlip('token')}
-                    palette={palette}
-                    label="flip to about"
-                    front={<TokenStream seedData={seedData} palette={palette} />}
-                    back={<AboutBack palette={palette} />}
-                  />
-                </div>
+          {/*
+            Render only one layout at a time so panel components (especially
+            the heavy EmbeddingSpace canvas) mount exactly once. Toggling via
+            CSS `display: none` would mount both trees and double the work.
+          */}
+          {isDesktop ? (
+            // Desktop (md+): original 2-column layout.
+            <div className="flex-1 min-h-0 w-full flex flex-row gap-4">
+              <div className="flex-[2] w-[65%] min-w-0 h-full">
+                {embeddingPanel}
               </div>
 
-              <div className="md:flex-[0.8] md:min-h-0 h-[50vh] md:h-auto">
-                <FlipPanel
-                  flipped={flipped.loss}
-                  onFlip={() => handleFlip('loss')}
-                  palette={palette}
-                  label="flip to scratchpad"
-                  front={<Loss seedData={seedData} palette={palette} />}
-                  back={<ScratchpadBack palette={palette} />}
-                />
-              </div>
+              <div className="flex-1 w-[35%] flex flex-col gap-4 min-w-0 h-full">
+                <div className="flex flex-row gap-4 flex-1 min-h-0">
+                  <div className="flex-1">{weightsPanel}</div>
+                  <div className="flex-[1.5]">{tokenPanel}</div>
+                </div>
 
-              <div className="md:flex-1 md:min-h-0 h-[60vh] md:h-auto">
-                <FlipPanel
-                  flipped={flipped.probs}
-                  onFlip={() => handleFlip('probs')}
-                  palette={palette}
-                  label="flip to uses"
-                  front={<Probabilities seedData={seedData} palette={palette} />}
-                  back={<UsesBack palette={palette} />}
-                />
+                <div className="flex-[0.8] min-h-0">{lossPanel}</div>
+
+                <div className="flex-1 min-h-0">{probsPanel}</div>
               </div>
             </div>
-          </div>
+          ) : (
+            // Mobile (<md): single column, custom panel order.
+            <div className="flex-1 min-h-0 w-full flex flex-col gap-4">
+              <div className="h-[60vh]">{tokenPanel}</div>
+              <div className="h-[60vh]">{weightsPanel}</div>
+              <div className="h-[70vh]">{embeddingPanel}</div>
+              <div className="h-[50vh]">{lossPanel}</div>
+              <div className="h-[60vh]">{probsPanel}</div>
+            </div>
+          )}
         </div>
       </TrainingCycleProvider>
 
