@@ -30,9 +30,8 @@ export interface CycleState {
 
 /**
  * Derive the canonical cycle state from a raw tick count. Pure function —
- * any consumer can recompute the cycle for any rawStep / stepFrame value
- * without coordinating with the embedding panel, which keeps paused-mode
- * scrubbing byte-deterministic.
+ * any consumer can recompute the cycle for any rawStep without
+ * coordinating with the embedding panel.
  */
 export function computeCycle(rawStep: number): CycleState {
   const r = Math.max(0, rawStep | 0);

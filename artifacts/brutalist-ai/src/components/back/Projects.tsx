@@ -13,12 +13,12 @@ export function ProjectsBack({ palette }: { palette: Palette }) {
         </span>
       </div>
       <div
-        className="flex-1 overflow-auto p-3"
+        className="flex-1 overflow-auto p-4"
         style={{ background: palette.bg, color: palette.ink }}
       >
         <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}
+          className="grid gap-4"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
         >
           {projects.map((p, i) => {
             const accent =
@@ -39,19 +39,19 @@ export function ProjectsBack({ palette }: { palette: Palette }) {
                   background: palette.bg,
                   color: palette.ink,
                   boxShadow: `4px 4px 0 0 ${palette.ink}`,
-                  padding: '8px 10px',
+                  padding: '10px 12px',
                 }}
               >
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-2">
                   <span
-                    className="font-bold px-1"
-                    style={{ background: accent, color: palette.bg, fontSize: 9 }}
+                    className="font-bold px-1.5 py-0.5"
+                    style={{ background: accent, color: palette.bg, fontSize: 11 }}
                   >
                     {p.tag}
                   </span>
                   <span
                     className="tabular-nums"
-                    style={{ fontSize: 10, opacity: 0.6 }}
+                    style={{ fontSize: 12, opacity: 0.65 }}
                   >
                     {p.year}
                   </span>
@@ -60,9 +60,9 @@ export function ProjectsBack({ palette }: { palette: Palette }) {
                   <img
                     src={p.image}
                     alt=""
-                    className="block w-full mb-1"
+                    className="block w-full mb-2"
                     style={{
-                      height: 64,
+                      height: 80,
                       objectFit: 'cover',
                       border: `2px solid ${palette.ink}`,
                       imageRendering: 'pixelated',
@@ -71,13 +71,13 @@ export function ProjectsBack({ palette }: { palette: Palette }) {
                 )}
                 <div
                   className="font-bold uppercase mb-1"
-                  style={{ fontSize: 12 }}
+                  style={{ fontSize: 14 }}
                 >
                   {p.title}
                 </div>
                 <div
                   className="leading-snug"
-                  style={{ fontSize: 10.5, opacity: 0.8 }}
+                  style={{ fontSize: 12, opacity: 0.85 }}
                 >
                   {p.blurb}
                 </div>

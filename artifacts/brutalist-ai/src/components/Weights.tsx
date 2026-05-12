@@ -1,15 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
-import { CycleState, computeCycle, Phase } from '../lib/trainingCycle';
+import { Phase } from '../lib/trainingCycle';
 import { useCycleStore } from '../contexts/TrainingCycleContext';
 
 interface WeightsProps {
   seedData: SeedData;
   palette: Palette;
-  paused?: boolean;
-  /** Current target frame. Each ±1 step advances or rewinds one tick. */
-  stepFrame?: number;
 }
 
 interface WeightRow {
@@ -17,12 +14,6 @@ interface WeightRow {
   formatted: string;
   /** Last N raw values (oldest → newest). Used to draw the row sparkline. */
   spark: number[];
-}
-
-interface Snapshot {
-  rows: WeightRow[];
-  prngState: number;
-  flickerIdx: number;
 }
 
 const MAX_ROWS = 32;
@@ -35,23 +26,16 @@ const ROW_HEIGHT_PX = 22;
 // most ticks are no-ops, with the occasional slow drift.
 function flickerCountForPhase(phase: Phase, prng: SeededPrng): number {
   prng(); // always consumed so PRNG state is phase-independent
-  // Tuned at the existing 400ms tick interval (~2.5 ticks/sec):
-  //   disperse → 3 rows/tick (~7.5 flickers/sec, busiest)
-  //   converge → 2 rows/tick (~5 flickers/sec)
-  //   hold     → 1 row/tick  (~2.5 flickers/sec, matches pre-coupling
-  //              baseline so HOLD never reads as a dead panel)
   if (phase === 'disperse') return 3;
   if (phase === 'converge') return 2;
   return 1;
 }
 
-export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: WeightsProps) {
+export function Weights({ seedData, palette }: WeightsProps) {
   const [rows, setRows] = useState<WeightRow[]>([]);
   const [flickerIdx, setFlickerIdx] = useState<number>(-1);
   const [visibleCount, setVisibleCount] = useState<number>(MIN_ROWS);
   const flickerPrngRef = useRef<SeededPrng | null>(null);
-  const historyRef = useRef<Snapshot[]>([]);
-  const lastFrameRef = useRef(0);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const cycleStore = useCycleStore();
@@ -59,8 +43,6 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
   useEffect(() => {
     const initPrng = derivePrng(seedData, PanelSlot.WeightsInit);
     flickerPrngRef.current = derivePrng(seedData, PanelSlot.WeightsFlicker);
-    historyRef.current = [];
-    lastFrameRef.current = 0;
     const initial: WeightRow[] = [];
     for (let i = 0; i < MAX_ROWS; i++) {
       const v = randomWeight(initPrng);
@@ -84,33 +66,11 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
     return () => ro.disconnect();
   }, []);
 
-  const tick = (
-    current: WeightRow[],
-    cycle: CycleState,
-    prng: SeededPrng,
-  ): { rows: WeightRow[]; flickerIdx: number } => {
-    if (current.length === 0) return { rows: current, flickerIdx: -1 };
-    const count = flickerCountForPhase(cycle.phase, prng);
-    if (count === 0) return { rows: current, flickerIdx: -1 };
-    const next = current.slice();
-    let lastIdx = -1;
-    for (let k = 0; k < count; k++) {
-      const idx = Math.floor(prng() * next.length);
-      const v = randomWeight(prng);
-      const prevSpark = next[idx].spark;
-      const spark =
-        prevSpark.length >= SPARK_LEN ? [...prevSpark.slice(1), v] : [...prevSpark, v];
-      next[idx] = { val: v, formatted: formatWeight(v), spark };
-      lastIdx = idx;
-    }
-    return { rows: next, flickerIdx: lastIdx };
-  };
-
-  // Live: timer-driven flicker, seeded phase offset to break sync.
-  // Each fire reads the current shared cycle so flicker activity tracks
-  // the dashboard-wide training arc.
+  // Timer-driven flicker, seeded phase offset to break sync. Each fire
+  // reads the current shared cycle so flicker activity tracks the
+  // dashboard-wide training arc.
   useEffect(() => {
-    if (paused || rows.length === 0) return;
+    if (rows.length === 0) return;
     const prng = flickerPrngRef.current!;
     const phaseOffset = Math.floor((seedData.panelSeeds[PanelSlot.WeightsFlicker] % 350));
     let cleanup: () => void = () => {};
@@ -118,9 +78,25 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
       const interval = setInterval(() => {
         const cycle = cycleStore.get();
         setRows(prev => {
-          const r = tick(prev, cycle, prng);
-          setFlickerIdx(r.flickerIdx);
-          return r.rows;
+          if (prev.length === 0) return prev;
+          const count = flickerCountForPhase(cycle.phase, prng);
+          if (count === 0) {
+            setFlickerIdx(-1);
+            return prev;
+          }
+          const next = prev.slice();
+          let lastIdx = -1;
+          for (let k = 0; k < count; k++) {
+            const idx = Math.floor(prng() * next.length);
+            const v = randomWeight(prng);
+            const prevSpark = next[idx].spark;
+            const spark =
+              prevSpark.length >= SPARK_LEN ? [...prevSpark.slice(1), v] : [...prevSpark, v];
+            next[idx] = { val: v, formatted: formatWeight(v), spark };
+            lastIdx = idx;
+          }
+          setFlickerIdx(lastIdx);
+          return next;
         });
       }, 400);
       cleanup = () => clearInterval(interval);
@@ -130,41 +106,7 @@ export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: We
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedData, paused, rows.length]);
-
-  // Paused: bidirectional frame stepping via snapshot history. Each tick
-  // reads the cycle for that exact frame so the panel stays a pure
-  // function of stepFrame end-to-end.
-  useEffect(() => {
-    if (!paused || rows.length === 0 || !flickerPrngRef.current) return;
-    const prng = flickerPrngRef.current;
-    const delta = stepFrame - lastFrameRef.current;
-    if (delta > 0) {
-      setRows(prev => {
-        let next = prev;
-        let lastIdx = flickerIdx;
-        for (let i = 0; i < delta; i++) {
-          historyRef.current.push({ rows: next, prngState: prng.getState(), flickerIdx: lastIdx });
-          const cycle = computeCycle(lastFrameRef.current + i + 1);
-          const r = tick(next, cycle, prng);
-          next = r.rows;
-          lastIdx = r.flickerIdx;
-        }
-        setFlickerIdx(lastIdx);
-        return next;
-      });
-    } else if (delta < 0) {
-      let snap: Snapshot | undefined;
-      for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
-      if (snap) {
-        prng.setState(snap.prngState);
-        setRows(snap.rows);
-        setFlickerIdx(snap.flickerIdx);
-      }
-    }
-    lastFrameRef.current = stepFrame;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepFrame, paused]);
+  }, [seedData, rows.length]);
 
   const visibleRows = rows.slice(0, visibleCount);
 

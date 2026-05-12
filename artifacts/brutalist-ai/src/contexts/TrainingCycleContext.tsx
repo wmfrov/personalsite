@@ -10,14 +10,9 @@ import { CycleState, computeCycle } from '../lib/trainingCycle';
 
 /**
  * The training cycle is a shared, single source of truth for the dashboard.
- * The provider drives a `rawStep` counter:
- *   - Live mode: wall-clock based at a fixed virtual VIRTUAL_FPS so the
- *     animation pace is independent of the monitor's refresh rate (60Hz,
- *     120Hz, 144Hz all read identically). rAF still drives the publish
- *     loop so panels repaint each frame; the published value is
- *     `floor(elapsedMs / (1000 / VIRTUAL_FPS))`.
- *   - Paused/export mode: `rawStep === stepFrame` so scrubbing is a pure
- *     function of the slider value (byte-deterministic exports preserved).
+ * The provider drives a `rawStep` counter from a wall-clock-based rAF loop
+ * at a fixed virtual VIRTUAL_FPS so the animation pace is independent of
+ * the monitor's refresh rate (60Hz, 120Hz, 144Hz all read identically).
  * Every panel reads from the same store so the whole dashboard reacts to
  * the same beat.
  */
@@ -41,27 +36,14 @@ interface CycleStore {
 const Ctx = createContext<CycleStore | null>(null);
 
 interface ProviderProps {
-  /** When true, rawStep follows `stepFrame`. When false, rAF drives it. */
-  paused: boolean;
-  /** Scrubber frame in paused mode. Ignored in live mode. */
-  stepFrame: number;
-  /** Bumps to reset the cycle to 0 (entering export, switching seeds). */
+  /** Bumps to reset the cycle to 0 (e.g. when the seed changes). */
   resetKey: string | number;
   children: React.ReactNode;
 }
 
-export function TrainingCycleProvider({
-  paused,
-  stepFrame,
-  resetKey,
-  children,
-}: ProviderProps) {
+export function TrainingCycleProvider({ resetKey, children }: ProviderProps) {
   const stateRef = useRef<CycleState>(computeCycle(0));
   const listenersRef = useRef<Set<() => void>>(new Set());
-  // Wall-clock integrator state for live mode. We snapshot the start time
-  // when the rAF loop begins (or resets) and derive `rawStep` from elapsed
-  // ms / MS_PER_VIRTUAL_STEP, so animation pace is the same on any
-  // refresh rate. The value resets only on `resetKey` change.
   const rawStepRef = useRef(0);
   const liveStartMsRef = useRef<number>(0);
 
@@ -91,17 +73,17 @@ export function TrainingCycleProvider({
     listenersRef.current.forEach(cb => cb());
   };
 
-  /** Fire listeners without changing state — used in live mode so panels
-   *  that paint per frame (EmbeddingSpace) get a draw call on every rAF
-   *  even on high-refresh displays where most frames don't advance the
-   *  virtual cycle clock. Subscribers that key off rawStep/epoch/step
-   *  see no change and short-circuit; subscribers that paint each tick
-   *  redraw at full display refresh. */
+  /** Fire listeners without changing state — used so panels that paint
+   *  per frame (EmbeddingSpace) get a draw call on every rAF even on
+   *  high-refresh displays where most frames don't advance the virtual
+   *  cycle clock. Subscribers that key off rawStep/epoch/step see no
+   *  change and short-circuit; subscribers that paint each tick redraw
+   *  at full display refresh. */
   const notifyOnly = () => {
     listenersRef.current.forEach(cb => cb());
   };
 
-  // Reset to zero whenever the seed (or export entry) changes.
+  // Reset to zero whenever the seed changes.
   useEffect(() => {
     rawStepRef.current = 0;
     liveStartMsRef.current = performance.now();
@@ -109,14 +91,11 @@ export function TrainingCycleProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey]);
 
-  // Live mode: wall-clock-driven rAF tick. Pace is fixed at VIRTUAL_FPS
-  // regardless of monitor refresh rate, so the same animation arc takes
-  // the same real time on 60Hz, 120Hz, and 144Hz displays.
+  // Wall-clock-driven rAF tick. Pace is fixed at VIRTUAL_FPS regardless
+  // of monitor refresh rate, so the same animation arc takes the same
+  // real time on 60Hz, 120Hz, and 144Hz displays.
   useEffect(() => {
-    if (paused) return;
     let id: number;
-    // Anchor "step 0" to right now, biased by however many steps we
-    // already advanced (so unpausing/reseeding does not jump backwards).
     const startMs = performance.now() - rawStepRef.current * MS_PER_VIRTUAL_STEP;
     liveStartMsRef.current = startMs;
     const tick = (now: number) => {
@@ -125,19 +104,12 @@ export function TrainingCycleProvider({
       const capped = Math.min(target, rawStepRef.current + MAX_CATCHUP_STEPS);
       const next = Math.max(rawStepRef.current, capped);
       if (next !== rawStepRef.current) {
-        // If we hit the catch-up cap (e.g. resuming from a backgrounded
-        // tab), shift liveStartMs forward so subsequent frames don't
-        // immediately re-saturate the cap and create a long burst.
         if (target > next) {
           liveStartMsRef.current = now - next * MS_PER_VIRTUAL_STEP;
         }
         rawStepRef.current = next;
         publish(next);
       } else {
-        // High-refresh displays: most frames don't advance the virtual
-        // clock, but EmbeddingSpace still wants a paint call each rAF
-        // for buttery-smooth rendering. useSyncExternalStore subscribers
-        // (epoch/rawStep) see no value change and skip re-render.
         notifyOnly();
       }
       id = requestAnimationFrame(tick);
@@ -145,16 +117,7 @@ export function TrainingCycleProvider({
     id = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paused]);
-
-  // Paused mode: rawStep === stepFrame (pure function of slider).
-  useEffect(() => {
-    if (!paused) return;
-    const r = Math.max(0, stepFrame | 0);
-    rawStepRef.current = r;
-    publish(r);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paused, stepFrame]);
+  }, []);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
 }

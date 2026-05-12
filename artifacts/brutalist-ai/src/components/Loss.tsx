@@ -7,17 +7,6 @@ import { useCycleStore } from '../contexts/TrainingCycleContext';
 interface LossProps {
   seedData: SeedData;
   palette: Palette;
-  paused?: boolean;
-  stepFrame?: number;
-}
-
-interface Snapshot {
-  values: number[];
-  valValues: number[];
-  level: number;
-  valLevel: number;
-  step: number;
-  prngState: number;
 }
 
 const WINDOW = 96;
@@ -33,18 +22,15 @@ const LOSS_FLOOR = 0.18;
 
 function targetTrainLoss(cycle: CycleState): number {
   if (cycle.phase === 'disperse') {
-    // Quick climb to the spike.
     return LOSS_FLOOR + (LOSS_PEAK - LOSS_FLOOR) * easeOutCubic(cycle.phaseProgress);
   }
   if (cycle.phase === 'converge') {
-    // Long descent.
     return LOSS_PEAK + (LOSS_FLOOR - LOSS_PEAK) * easeOutCubic(cycle.phaseProgress);
   }
-  // hold: settled near the floor with a tiny continued sag.
   return LOSS_FLOOR - 0.02 * easeOutCubic(cycle.phaseProgress);
 }
 
-export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossProps) {
+export function Loss({ seedData, palette }: LossProps) {
   const [values, setValues] = useState<number[]>([]);
   const [valValues, setValValues] = useState<number[]>([]);
   const [step, setStep] = useState<number>(0);
@@ -52,8 +38,6 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
   const levelRef = useRef(LOSS_FLOOR);
   const valLevelRef = useRef(LOSS_FLOOR + 0.06);
   const stepRef = useRef(0);
-  const historyRef = useRef<Snapshot[]>([]);
-  const lastFrameRef = useRef(0);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
@@ -62,13 +46,11 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
   useEffect(() => {
     const initPrng = derivePrng(seedData, PanelSlot.LossInit);
     animPrngRef.current = derivePrng(seedData, PanelSlot.LossAnim);
-    historyRef.current = [];
-    lastFrameRef.current = 0;
     stepRef.current = 0;
 
-    // Pre-fill the window from the *initial* cycle (rawStep 0 → epoch 0,
-    // disperse phase 0%) so the panel mounts with a coherent slope into
-    // the current state instead of a flat baseline.
+    // Pre-fill the window from the *initial* cycle so the panel mounts
+    // with a coherent slope into the current state instead of a flat
+    // baseline.
     let lvl = LOSS_FLOOR;
     let valLvl = LOSS_FLOOR + 0.06;
     const init: number[] = [];
@@ -100,27 +82,16 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
     return () => ro.disconnect();
   }, []);
 
-  const tick = (
-    cur: number[],
-    valCur: number[],
-    lvl: number,
-    valLvl: number,
-    cycle: CycleState,
-    prng: SeededPrng,
-  ) => {
-    const nextLvl = nextLevel(lvl, cycle, prng);
-    const nextValLvl = nextValLevel(valLvl, nextLvl, prng);
-    return {
-      values: [...cur.slice(1), nextLvl],
-      valValues: [...valCur.slice(1), nextValLvl],
-      level: nextLvl,
-      valLevel: nextValLvl,
-    };
-  };
-
-  // Live: phase-offset interval to keep panels out of lockstep.
+  // Closure helper so live tick reads the freshest valValues without
+  // re-subscribing the interval.
+  const valValuesStateRef = useRef<number[]>([]);
   useEffect(() => {
-    if (paused || values.length === 0) return;
+    valValuesStateRef.current = valValues;
+  }, [valValues]);
+
+  // Phase-offset interval to keep panels out of lockstep.
+  useEffect(() => {
+    if (values.length === 0) return;
     const prng = animPrngRef.current!;
     const phaseOffset = Math.floor(seedData.panelSeeds[PanelSlot.LossAnim] % 250);
     let cleanup: () => void = () => {};
@@ -128,13 +99,14 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
       const interval = setInterval(() => {
         const cycle = cycleStore.get();
         setValues(prev => {
-          const r = tick(prev, valValuesRefRead(), levelRef.current, valLevelRef.current, cycle, prng);
-          levelRef.current = r.level;
-          valLevelRef.current = r.valLevel;
-          setValValues(r.valValues);
+          const nextLvl = nextLevel(levelRef.current, cycle, prng);
+          const nextValLvl = nextValLevel(valLevelRef.current, nextLvl, prng);
+          levelRef.current = nextLvl;
+          valLevelRef.current = nextValLvl;
+          setValValues(curVal => [...curVal.slice(1), nextValLvl]);
           stepRef.current += 1;
           setStep(stepRef.current);
-          return r.values;
+          return [...prev.slice(1), nextLvl];
         });
       }, 300);
       cleanup = () => clearInterval(interval);
@@ -144,68 +116,7 @@ export function Loss({ seedData, palette, paused = false, stepFrame = 0 }: LossP
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedData, values.length, paused]);
-
-  // Closure helper so live tick reads the freshest valValues without
-  // re-subscribing the interval.
-  const valValuesStateRef = useRef<number[]>([]);
-  useEffect(() => {
-    valValuesStateRef.current = valValues;
-  }, [valValues]);
-  const valValuesRefRead = () => valValuesStateRef.current;
-
-  // Paused: each stepFrame delta is one loss tick. Each tick reads the
-  // shared cycle at that exact frame so the curve's phase responses stay
-  // bit-deterministic — the loss panel is a pure function of stepFrame.
-  useEffect(() => {
-    if (!paused || values.length === 0 || !animPrngRef.current) return;
-    const prng = animPrngRef.current;
-    const delta = stepFrame - lastFrameRef.current;
-    if (delta > 0) {
-      setValues(prev => {
-        let s = prev;
-        let sv = valValuesStateRef.current;
-        let lvl = levelRef.current;
-        let valLvl = valLevelRef.current;
-        for (let i = 0; i < delta; i++) {
-          historyRef.current.push({
-            values: [...s],
-            valValues: [...sv],
-            level: lvl,
-            valLevel: valLvl,
-            step: stepRef.current,
-            prngState: prng.getState(),
-          });
-          const cycle = computeCycle(lastFrameRef.current + i + 1);
-          const r = tick(s, sv, lvl, valLvl, cycle, prng);
-          s = r.values;
-          sv = r.valValues;
-          lvl = r.level;
-          valLvl = r.valLevel;
-          stepRef.current += 1;
-        }
-        levelRef.current = lvl;
-        valLevelRef.current = valLvl;
-        setValValues(sv);
-        setStep(stepRef.current);
-        return s;
-      });
-    } else if (delta < 0) {
-      let snap: Snapshot | undefined;
-      for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
-      if (snap) {
-        prng.setState(snap.prngState);
-        levelRef.current = snap.level;
-        valLevelRef.current = snap.valLevel;
-        stepRef.current = snap.step;
-        setValues(snap.values);
-        setValValues(snap.valValues);
-        setStep(snap.step);
-      }
-    }
-    lastFrameRef.current = stepFrame;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepFrame, paused]);
+  }, [seedData, values.length]);
 
   const PAD_L = 30;
   const PAD_R = 6;

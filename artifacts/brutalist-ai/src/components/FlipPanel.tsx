@@ -7,8 +7,6 @@ interface FlipPanelProps {
   palette: Palette;
   front: React.ReactNode;
   back: React.ReactNode;
-  /** Forces the front face to show and hides the flip button (used during PNG export). */
-  disabled?: boolean;
   /** Optional aria/title for the flip button. */
   label?: string;
 }
@@ -19,10 +17,8 @@ export function FlipPanel({
   palette,
   front,
   back,
-  disabled = false,
   label = 'flip panel',
 }: FlipPanelProps) {
-  const showBack = !disabled && flipped;
   return (
     <div
       className="relative h-full w-full"
@@ -33,20 +29,16 @@ export function FlipPanel({
         style={{
           transformStyle: 'preserve-3d',
           transition: 'transform 600ms cubic-bezier(.2,.8,.2,1)',
-          transform: showBack ? 'rotateY(180deg)' : 'rotateY(0deg)',
+          transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
         }}
       >
-        <Face hidden={showBack}>
+        <Face hidden={flipped}>
           {front}
-          {!disabled && (
-            <FlipButton onClick={onFlip} palette={palette} label={label} />
-          )}
+          <FlipButton onClick={onFlip} palette={palette} label={label} />
         </Face>
-        <Face hidden={!showBack} back>
+        <Face hidden={!flipped} back>
           {back}
-          {!disabled && (
-            <FlipButton onClick={onFlip} palette={palette} label={label} />
-          )}
+          <FlipButton onClick={onFlip} palette={palette} label={label} />
         </Face>
       </div>
     </div>
@@ -87,21 +79,23 @@ function FlipButton({
   palette: Palette;
   label: string;
 }) {
+  // Mobile (<md): full-width strip across the bottom of the panel — large,
+  // unmistakable tap target. Desktop (md+): small corner badge so it
+  // doesn't crowd the visualization.
   return (
     <button
       type="button"
       onClick={onClick}
-      data-export-skip="true"
       aria-label={label}
       title={label}
-      className="absolute bottom-1 right-1 font-mono font-bold cursor-pointer"
+      className="absolute font-mono font-bold cursor-pointer flex items-center justify-center
+                 bottom-0 left-0 right-0 py-2 text-sm tracking-widest
+                 md:bottom-1 md:right-1 md:left-auto md:top-auto md:py-[3px] md:px-[7px] md:text-[10px]"
       style={{
         background: palette.bg,
         color: palette.ink,
         border: `3px solid ${palette.ink}`,
         boxShadow: `4px 4px 0 0 ${palette.ink}`,
-        padding: '3px 7px',
-        fontSize: 10,
         lineHeight: 1,
         letterSpacing: '0.05em',
         zIndex: 5,

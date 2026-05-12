@@ -2,21 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
 import { generateMixedToken } from '../lib/tokens';
-import { computeCycle } from '../lib/trainingCycle';
 import { useCycleStore } from '../contexts/TrainingCycleContext';
 
 interface TokenStreamProps {
   seedData: SeedData;
   palette: Palette;
-  paused?: boolean;
-  stepFrame?: number;
-}
-
-interface Snapshot {
-  tokens: string[];
-  idx: number;
-  lastEpoch: number;
-  maxTokens: number;
 }
 
 const AVG_TOKEN_PX = 48;
@@ -30,7 +20,7 @@ const GEN_BUFFER = 800;
 // out of `generateMixedToken`.
 const EPOCH_DIVIDER_PREFIX = '⟦EPOCH:';
 
-export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }: TokenStreamProps) {
+export function TokenStream({ seedData, palette }: TokenStreamProps) {
   const [visibleTokens, setVisibleTokens] = useState<string[]>([]);
   const [maxTokens, setMaxTokens] = useState<number>(MIN_VISIBLE);
   const tokensRef = useRef<string[]>([]);
@@ -38,8 +28,6 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
   const idxRef = useRef(0);
   const lastEpochRef = useRef(0);
   const visibleRef = useRef<string[]>([]);
-  const historyRef = useRef<Snapshot[]>([]);
-  const lastFrameRef = useRef(0);
   const maxTokensRef = useRef<number>(MIN_VISIBLE);
 
   const cycleStore = useCycleStore();
@@ -59,8 +47,6 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
     visibleRef.current = [];
     idxRef.current = 0;
     lastEpochRef.current = 0;
-    historyRef.current = [];
-    lastFrameRef.current = 0;
   }, [seedData]);
 
   useEffect(() => {
@@ -104,41 +90,11 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
   };
 
   useEffect(() => {
-    if (paused || tokensRef.current.length === 0) return;
+    if (tokensRef.current.length === 0) return;
     const interval = setInterval(() => tickOnce(cycleStore.get().epoch), 120);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedData, paused]);
-
-  useEffect(() => {
-    if (!paused || tokensRef.current.length === 0) return;
-    const delta = stepFrame - lastFrameRef.current;
-    if (delta > 0) {
-      for (let i = 0; i < delta; i++) {
-        historyRef.current.push({
-          tokens: [...visibleRef.current],
-          idx: idxRef.current,
-          lastEpoch: lastEpochRef.current,
-          maxTokens: maxTokensRef.current,
-        });
-        const epoch = computeCycle(lastFrameRef.current + i + 1).epoch;
-        tickOnce(epoch);
-      }
-    } else if (delta < 0) {
-      let snap: Snapshot | undefined;
-      for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
-      if (snap) {
-        visibleRef.current = snap.tokens;
-        idxRef.current = snap.idx;
-        lastEpochRef.current = snap.lastEpoch;
-        maxTokensRef.current = snap.maxTokens;
-        setMaxTokens(snap.maxTokens);
-        setVisibleTokens(snap.tokens);
-      }
-    }
-    lastFrameRef.current = stepFrame;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepFrame, paused]);
+  }, [seedData]);
 
   const renderToken = (tok: string, i: number) => {
     if (tok.startsWith(EPOCH_DIVIDER_PREFIX)) {
@@ -167,10 +123,7 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
     <div className="brutalist-panel h-full flex flex-col min-h-0">
       <div className="brutalist-label shrink-0 flex justify-between">
         <span>TOKEN STREAM</span>
-        <span
-          className={paused ? '' : 'animate-pulse'}
-          style={{ color: palette.accent1 }}
-        >
+        <span className="animate-pulse" style={{ color: palette.accent1 }}>
           ● REC
         </span>
       </div>
@@ -181,7 +134,7 @@ export function TokenStream({ seedData, palette, paused = false, stepFrame = 0 }
       >
         <span style={{ color: palette.accent3 }}>{`> `}</span>
         {visibleTokens.map(renderToken)}
-        <span className={paused ? '' : 'caret-blink'} style={{ color: palette.bg }}>█</span>
+        <span className="caret-blink" style={{ color: palette.bg }}>█</span>
       </div>
     </div>
   );

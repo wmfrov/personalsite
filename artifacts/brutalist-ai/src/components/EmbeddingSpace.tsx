@@ -55,9 +55,6 @@ interface EmbeddingSpaceProps {
   palette: Palette;
   /** Resolved accent color for the "you" dot. */
   accent: string;
-  paused?: boolean;
-  /** Increments by 1 per arrow press in export mode; advances one physics step. */
-  stepFrame?: number;
 }
 
 interface Dot {
@@ -87,14 +84,6 @@ interface Dot {
   jitterPhaseY: number;
   svx: number;
   svy: number;
-}
-
-interface FrameSnapshot {
-  dots: Dot[];
-  step: number;
-  epoch: number;
-  nextSnapStep: number;
-  prngState: number;
 }
 
 interface Trail {
@@ -297,10 +286,9 @@ function computeAttnEdges(dots: Dot[]): AttnEdge[] {
 
 // ───────────────────────────────────────────────────────────────────
 // Header EPOCH/STEP chip — subscribes directly to the cycle store so
-// the chip text stays exactly in sync with the rendered frame in both
-// live and paused/export mode (essential for deterministic export
-// captures). React only re-renders this tiny <span>, not the whole
-// panel, so the perf cost is negligible.
+// the chip text stays exactly in sync with the rendered frame. React
+// only re-renders this tiny <span>, not the whole panel, so the perf
+// cost is negligible.
 // ───────────────────────────────────────────────────────────────────
 
 function CycleHeaderChip({ palette }: { palette: Palette }) {
@@ -334,7 +322,6 @@ export function EmbeddingSpace({
   seedData,
   palette,
   accent,
-  paused = false,
 }: EmbeddingSpaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -355,7 +342,6 @@ export function EmbeddingSpace({
   const dotsRef = useRef<Dot[]>([]);
   const dotElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const animPrngRef = useRef<SeededPrng | null>(null);
-  const historyRef = useRef<FrameSnapshot[]>([]);
   const trailsRef = useRef<Trail[]>([]);
   const lastRawStepRef = useRef(0);
   const lastEpochRef = useRef(0);
@@ -369,14 +355,12 @@ export function EmbeddingSpace({
   // Refs for state that paintFrame needs but should not cause the cycle
   // subscription to re-bind. These are assigned during render (below,
   // before the return statement) so the synchronous useLayoutEffect
-  // paintFrame call sees the latest values — important in paused mode
-  // where there is no cycle tick to drive a follow-up paint.
+  // paintFrame call sees the latest values.
   const modeRef = useRef(mode);
   const paletteRef = useRef(palette);
   const accentRef = useRef(accent);
   const hoveredRef = useRef<number | null>(hoveredDotId);
   const nnRef = useRef<number[]>(nearestNeighbors);
-  const pausedRef = useRef(paused);
   // Cached container DOMRect so the per-tick physics step doesn't pay
   // for a getBoundingClientRect every frame. Refreshed by the
   // ResizeObserver and on the next mouse-move after a possible scroll.
@@ -495,14 +479,11 @@ export function EmbeddingSpace({
     lastRawStepRef.current = 0;
     lastEpochRef.current = 0;
     nextSnapStepRef.current = HOLD_PHASE_START_STEP + 30;
-    historyRef.current = [];
     trailsRef.current = [];
   }, [seedData]);
 
   // Pure mutation of dotsRef — no React state writes per tick.
   const stepPhysics = (cycle: CycleState) => {
-    const isPaused = pausedRef.current;
-
     if (cycle.epoch !== lastEpochRef.current) {
       const ap = animPrngRef.current;
       if (ap) {
@@ -543,16 +524,14 @@ export function EmbeddingSpace({
           d.y = newHomeY;
           d.targetX = newHomeX;
           d.targetY = newHomeY;
-          if (!isPaused) {
-            trailsRef.current.push({
-              fromX,
-              fromY,
-              toX: d.x,
-              toY: d.y,
-              startedAt: performance.now(),
-              cluster: d.cluster,
-            });
-          }
+          trailsRef.current.push({
+            fromX,
+            fromY,
+            toX: d.x,
+            toY: d.y,
+            startedAt: performance.now(),
+            cluster: d.cluster,
+          });
         }
       }
     }
@@ -592,7 +571,7 @@ export function EmbeddingSpace({
         dot.baseY = Math.max(0, Math.min(1, easedY + jy));
       }
 
-      if (mouseActive && !isPaused && containerRect) {
+      if (mouseActive && containerRect) {
         const mx = (mouseRef.current.x - containerRect.left) / containerRect.width;
         const my = (mouseRef.current.y - containerRect.top) / containerRect.height;
         const dx = mx - dot.baseX;
@@ -644,7 +623,6 @@ export function EmbeddingSpace({
     const palette = paletteRef.current;
     const accent = accentRef.current;
     const mode = modeRef.current;
-    const isPaused = pausedRef.current;
     const colorForCluster = (cluster: number): string => {
       if (cluster === 0) return palette.ink;
       if (cluster === 1) return palette.accent1;
@@ -720,8 +698,8 @@ export function EmbeddingSpace({
       attnWeightsRef.current = new Map();
     }
 
-    // Trails (LIVE-only).
-    if (!isPaused && trailsRef.current.length > 0) {
+    // Trails.
+    if (trailsRef.current.length > 0) {
       const now = performance.now();
       ctx.lineWidth = 2;
       ctx.setLineDash([2, 3]);
@@ -822,39 +800,12 @@ export function EmbeddingSpace({
       const delta = cycle.rawStep - lastRawStepRef.current;
       if (delta > 0) {
         for (let i = 0; i < delta; i++) {
-          const prevRaw = lastRawStepRef.current + i;
-          const targetRaw = prevRaw + 1;
-          if (pausedRef.current) {
-            const prevCycle = computeCycle(prevRaw);
-            historyRef.current.push({
-              dots: dotsRef.current.map(d => ({ ...d })),
-              step: prevCycle.step,
-              epoch: prevCycle.epoch,
-              nextSnapStep: nextSnapStepRef.current,
-              prngState: prng.getState(),
-            });
-          }
+          const targetRaw = lastRawStepRef.current + i + 1;
           stepPhysics(computeCycle(targetRaw));
-        }
-      } else if (delta < 0 && pausedRef.current) {
-        let snap: FrameSnapshot | undefined;
-        for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
-        if (snap) {
-          prng.setState(snap.prngState);
-          lastEpochRef.current = snap.epoch;
-          nextSnapStepRef.current = snap.nextSnapStep;
-          dotsRef.current = snap.dots.map(d => ({ ...d }));
         }
       }
       lastRawStepRef.current = cycle.rawStep;
       paintFrame();
-      // In paused/export mode there is no 4Hz timer driving ATTN chip
-      // text refreshes, so each scrub step must immediately re-render
-      // chips so the displayed % stays in sync with the painted frame.
-      // Live mode skips this to preserve 60fps (chips update at 4Hz).
-      if (pausedRef.current && modeRef.current === 'attn') {
-        setAttnTick(n => (n + 1) | 0);
-      }
     };
 
     // Process whatever is already in the store on (re-)subscribe so the
@@ -878,16 +829,6 @@ export function EmbeddingSpace({
     return () => clearInterval(id);
   }, [mode]);
 
-  // Drop in-flight trails on entering paused/export mode so the
-  // deterministic frame stream never carries them.
-  useEffect(() => {
-    if (paused) {
-      trailsRef.current = [];
-      paintFrame();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paused]);
-
   const handleMouseMove = (e: React.MouseEvent) => {
     // Refresh the cached rect on the first move after a possible scroll
     // so mouse-attraction physics keeps tracking the cursor accurately
@@ -908,7 +849,7 @@ export function EmbeddingSpace({
   // the per-frame React update path. While hovering, refresh at ~6Hz so
   // the highlighted neighbors track the cluster as dots drift.
   useEffect(() => {
-    if (hoveredDotId === null || paused) return;
+    if (hoveredDotId === null) return;
     const compute = () => {
       const arr = dotsRef.current;
       let hover: Dot | undefined;
@@ -944,7 +885,7 @@ export function EmbeddingSpace({
     compute();
     const id = setInterval(compute, 160);
     return () => clearInterval(id);
-  }, [hoveredDotId, paused]);
+  }, [hoveredDotId]);
 
   const colorForCluster = (cluster: number): string => {
     if (cluster === 0) return palette.ink;
@@ -958,14 +899,12 @@ export function EmbeddingSpace({
   // Mutating refs in render is allowed because it's an idempotent local
   // assignment with no side effects; the alternative (useEffect mirror)
   // runs AFTER useLayoutEffect, which would leave the canvas one commit
-  // stale on mode/palette/hover/paused changes — fatal in paused mode
-  // because no cycle tick would arrive to repaint.
+  // stale on mode/palette/hover changes.
   modeRef.current = mode;
   paletteRef.current = palette;
   accentRef.current = accent;
   hoveredRef.current = hoveredDotId;
   nnRef.current = nearestNeighbors;
-  pausedRef.current = paused;
 
   // Snapshot of attention weights for chip rendering. Refreshed via
   // `attnTick` (5Hz) — chip percentages may lag by ~250ms, which is

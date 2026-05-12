@@ -2,25 +2,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
 import { generateProbabilityLabel } from '../lib/tokens';
-import { CycleState, computeCycle, easeOutCubic } from '../lib/trainingCycle';
+import { CycleState, easeOutCubic } from '../lib/trainingCycle';
 import { useCycleStore } from '../contexts/TrainingCycleContext';
 
 interface ProbabilitiesProps {
   seedData: SeedData;
   palette: Palette;
-  paused?: boolean;
-  stepFrame?: number;
 }
 
 interface ProbBar {
   label: string;
   value: number;
   target: number;
-}
-
-interface Snapshot {
-  bars: ProbBar[];
-  prngState: number;
 }
 
 const NUM_BARS = 8;
@@ -36,39 +29,32 @@ function targetsForPhase(cycle: CycleState, prng: SeededPrng): number[] {
 
   if (cycle.phase === 'disperse') {
     for (let i = 0; i < NUM_BARS; i++) {
-      // Near-uniform around 1/N with a touch of noise.
       out[i] = Math.max(0.02, Math.min(0.98, 1 / NUM_BARS + (prng() - 0.5) * 0.18));
     }
     return out;
   }
 
-  // Rank-based shape, easing in over the converge phase, fully held in hold.
   const e = cycle.phase === 'hold' ? 1 : easeOutCubic(cycle.phaseProgress);
   for (let i = 0; i < NUM_BARS; i++) {
     let base: number;
     if (i === winner) base = 0.78;
     else if (i === runner) base = 0.42;
     else base = 0.06 + (prng() * 0.18);
-    // Lerp from a uniform-ish 1/N toward the shaped value.
     const uniform = 1 / NUM_BARS;
     out[i] = Math.max(0.02, Math.min(0.98, uniform + (base - uniform) * e));
   }
   return out;
 }
 
-export function Probabilities({ seedData, palette, paused = false, stepFrame = 0 }: ProbabilitiesProps) {
+export function Probabilities({ seedData, palette }: ProbabilitiesProps) {
   const [bars, setBars] = useState<ProbBar[]>([]);
   const jitterPrngRef = useRef<SeededPrng | null>(null);
-  const historyRef = useRef<Snapshot[]>([]);
-  const lastFrameRef = useRef(0);
 
   const cycleStore = useCycleStore();
 
   useEffect(() => {
     const initPrng = derivePrng(seedData, PanelSlot.ProbsInit);
     jitterPrngRef.current = derivePrng(seedData, PanelSlot.ProbsJitter);
-    historyRef.current = [];
-    lastFrameRef.current = 0;
     const newBars: ProbBar[] = [];
     const labels = new Set<string>();
     let guard = 0;
@@ -85,22 +71,20 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
     setBars(newBars);
   }, [seedData]);
 
-  const tick = (current: ProbBar[], cycle: CycleState, prng: SeededPrng): ProbBar[] => {
-    if (current.length === 0) return current;
-    const targets = targetsForPhase(cycle, prng);
-    return current.map((b, i) => ({ ...b, target: targets[i] }));
-  };
-
-  // Live: phase-offset interval reads the shared cycle each tick.
+  // Phase-offset interval reads the shared cycle each tick.
   useEffect(() => {
-    if (paused || bars.length === 0) return;
+    if (bars.length === 0) return;
     const prng = jitterPrngRef.current!;
     const phaseOffset = Math.floor(seedData.panelSeeds[PanelSlot.ProbsJitter] % 450);
     let cleanup: () => void = () => {};
     const start = setTimeout(() => {
       const interval = setInterval(() => {
         const cycle = cycleStore.get();
-        setBars(prev => tick(prev, cycle, prng));
+        setBars(prev => {
+          if (prev.length === 0) return prev;
+          const targets = targetsForPhase(cycle, prng);
+          return prev.map((b, i) => ({ ...b, target: targets[i] }));
+        });
       }, 500);
       cleanup = () => clearInterval(interval);
     }, phaseOffset);
@@ -109,33 +93,7 @@ export function Probabilities({ seedData, palette, paused = false, stepFrame = 0
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedData, bars.length, paused]);
-
-  useEffect(() => {
-    if (!paused || bars.length === 0 || !jitterPrngRef.current) return;
-    const prng = jitterPrngRef.current;
-    const delta = stepFrame - lastFrameRef.current;
-    if (delta > 0) {
-      setBars(prev => {
-        let next = prev;
-        for (let i = 0; i < delta; i++) {
-          historyRef.current.push({ bars: next, prngState: prng.getState() });
-          const cycle = computeCycle(lastFrameRef.current + i + 1);
-          next = tick(next, cycle, prng);
-        }
-        return next;
-      });
-    } else if (delta < 0) {
-      let snap: Snapshot | undefined;
-      for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
-      if (snap) {
-        prng.setState(snap.prngState);
-        setBars(snap.bars);
-      }
-    }
-    lastFrameRef.current = stepFrame;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepFrame, paused]);
+  }, [seedData, bars.length]);
 
   const rankByTarget = [...bars]
     .map((b, i) => ({ i, t: b.target }))
