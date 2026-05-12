@@ -121,6 +121,13 @@ function ProjectLink({
   palette: Palette;
 }) {
   const [hover, setHover] = React.useState(false);
+  const [focused, setFocused] = React.useState(false);
+  // Press-in (accent fill, shadow collapses) on hover OR keyboard focus.
+  const pressed = hover || focused;
+  // Keyboard focus also gets an explicit outer ring so it's distinguishable
+  // from a mouse hover and meets the brutalist focus-visibility bar.
+  const focusRing = focused ? `0 0 0 2px ${palette.bg}, 0 0 0 4px ${palette.ink}` : '';
+  const restShadow = `2px 2px 0 0 ${palette.ink}`;
   return (
     <a
       href={href}
@@ -129,17 +136,21 @@ function ProjectLink({
       aria-label={ariaLabel}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      onFocus={() => setHover(true)}
-      onBlur={() => setHover(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       className="font-bold uppercase tracking-widest no-underline focus:outline-none"
       style={{
         fontSize: 10,
         padding: '4px 8px',
         border: `2px solid ${palette.ink}`,
-        background: hover ? accent : palette.bg,
-        color: hover ? palette.bg : palette.ink,
-        boxShadow: hover ? `none` : `2px 2px 0 0 ${palette.ink}`,
-        transform: hover ? 'translate(2px, 2px)' : 'none',
+        background: pressed ? accent : palette.bg,
+        color: pressed ? palette.bg : palette.ink,
+        boxShadow: focused
+          ? focusRing
+          : pressed
+            ? 'none'
+            : restShadow,
+        transform: pressed && !focused ? 'translate(2px, 2px)' : 'none',
         transition: 'transform 80ms, box-shadow 80ms, background 80ms, color 80ms',
       }}
     >
