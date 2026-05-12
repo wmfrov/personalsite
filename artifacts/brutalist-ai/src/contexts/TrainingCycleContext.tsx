@@ -84,6 +84,16 @@ export function TrainingCycleProvider({
     listenersRef.current.forEach(cb => cb());
   };
 
+  /** Fire listeners without changing state — used in live mode so panels
+   *  that paint per frame (EmbeddingSpace) get a draw call on every rAF
+   *  even on high-refresh displays where most frames don't advance the
+   *  virtual cycle clock. Subscribers that key off rawStep/epoch/step
+   *  see no change and short-circuit; subscribers that paint each tick
+   *  redraw at full display refresh. */
+  const notifyOnly = () => {
+    listenersRef.current.forEach(cb => cb());
+  };
+
   // Reset to zero whenever the seed (or export entry) changes.
   useEffect(() => {
     rawStepRef.current = 0;
@@ -108,6 +118,12 @@ export function TrainingCycleProvider({
       if (next !== rawStepRef.current) {
         rawStepRef.current = next;
         publish(next);
+      } else {
+        // High-refresh displays: most frames don't advance the virtual
+        // clock, but EmbeddingSpace still wants a paint call each rAF
+        // for buttery-smooth rendering. useSyncExternalStore subscribers
+        // (epoch/rawStep) see no value change and skip re-render.
+        notifyOnly();
       }
       id = requestAnimationFrame(tick);
     };
