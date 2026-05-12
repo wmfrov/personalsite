@@ -22,45 +22,13 @@
         "value": "in/will-ziegler",
         "href": "https://www.linkedin.com/in/will-ziegler/"
       }
-    ],
-    "availability": "Always interested to hear what's out there"
+    ]
   },
   "uses": {
     "intro": "Tools I reach for daily, and a few I just love.",
     "groups": [
       {
-        "title": "EDITOR & SHELL",
-        "items": [
-          { "name": "Neovim", "note": "lazyvim config, telescope, treesitter" },
-          { "name": "Ghostty", "note": "terminal of choice, GPU-fast" },
-          { "name": "Fish + Starship", "note": "shell + prompt" },
-          { "name": "tmux", "note": "session-per-project" }
-        ]
-      },
-      {
-        "title": "DEV",
-        "items": [
-          { "name": "TypeScript", "note": "default for everything web" },
-          { "name": "Rust", "note": "for performance-critical parts" },
-          { "name": "Vite", "note": "frontend build" },
-          { "name": "Postgres", "note": "primary datastore" }
-        ]
-      },
-      {
-        "title": "DESIGN",
-        "items": [
-          { "name": "Figma", "note": "wireframes & specs" },
-          { "name": "Procreate", "note": "iPad sketches" },
-          { "name": "IBM Plex Mono", "note": "favorite mono typeface" }
-        ]
-      },
-      {
-        "title": "HARDWARE",
-        "items": [
-          { "name": "M2 MacBook Air", "note": "primary machine" },
-          { "name": "HHKB Pro Hybrid", "note": "keyboard" },
-          { "name": "LG 27\" 4K", "note": "external display" }
-        ]
+        "title": "coming soon",
       }
     ]
   },
@@ -74,41 +42,6 @@
       "tag": "GENERATIVE",
       "year": "2026",
       "href": "https://github.com/yourhandle/brutalist-ai"
-    },
-    {
-      "title": "Plotter Studio",
-      "blurb": "SVG-first design tool for AxiDraw pen plotters, with live preview and HPGL export.",
-      "tag": "TOOL",
-      "year": "2025",
-      "href": "https://github.com/yourhandle/plotter-studio"
-    },
-    {
-      "title": "Quiet Reader",
-      "blurb": "Distraction-free RSS reader. Self-hostable, keyboard-first, no tracking.",
-      "tag": "APP",
-      "year": "2025",
-      "href": "https://github.com/yourhandle/quiet-reader"
-    },
-    {
-      "title": "Type Lab",
-      "blurb": "Variable-font playground for testing custom typefaces in real layouts.",
-      "tag": "PLAYGROUND",
-      "year": "2024",
-      "href": "https://github.com/yourhandle/type-lab"
-    },
-    {
-      "title": "Field Notes API",
-      "blurb": "Tiny Rust HTTP server that turns a folder of markdown files into a JSON feed.",
-      "tag": "OSS",
-      "year": "2024",
-      "href": "https://github.com/yourhandle/field-notes-api"
-    },
-    {
-      "title": "Pico Synth",
-      "blurb": "Raspberry Pi Pico-based 4-voice subtractive synth with capacitive-touch keys.",
-      "tag": "HARDWARE",
-      "year": "2023",
-      "href": "https://github.com/yourhandle/pico-synth"
     }
   ]
 }
