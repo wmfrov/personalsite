@@ -11,12 +11,19 @@ import { CycleState, computeCycle } from '../lib/trainingCycle';
 /**
  * The training cycle is a shared, single source of truth for the dashboard.
  * The provider drives a `rawStep` counter:
- *   - Live mode: rAF-incremented at ~60fps.
+ *   - Live mode: wall-clock based at a fixed virtual VIRTUAL_FPS so the
+ *     animation pace is independent of the monitor's refresh rate (60Hz,
+ *     120Hz, 144Hz all read identically). rAF still drives the publish
+ *     loop so panels repaint each frame; the published value is
+ *     `floor(elapsedMs / (1000 / VIRTUAL_FPS))`.
  *   - Paused/export mode: `rawStep === stepFrame` so scrubbing is a pure
- *     function of the slider value.
+ *     function of the slider value (byte-deterministic exports preserved).
  * Every panel reads from the same store so the whole dashboard reacts to
  * the same beat.
  */
+
+const VIRTUAL_FPS = 60;
+const MS_PER_VIRTUAL_STEP = 1000 / VIRTUAL_FPS;
 
 interface CycleStore {
   get(): CycleState;
@@ -44,9 +51,12 @@ export function TrainingCycleProvider({
 }: ProviderProps) {
   const stateRef = useRef<CycleState>(computeCycle(0));
   const listenersRef = useRef<Set<() => void>>(new Set());
-  // rAF integrator state for live mode. We accumulate steps via rAF
-  // monotonically; the value resets only on `resetKey` change.
+  // Wall-clock integrator state for live mode. We snapshot the start time
+  // when the rAF loop begins (or resets) and derive `rawStep` from elapsed
+  // ms / MS_PER_VIRTUAL_STEP, so animation pace is the same on any
+  // refresh rate. The value resets only on `resetKey` change.
   const rawStepRef = useRef(0);
+  const liveStartMsRef = useRef<number>(0);
 
   const store = useMemo<CycleStore>(
     () => ({
@@ -77,17 +87,28 @@ export function TrainingCycleProvider({
   // Reset to zero whenever the seed (or export entry) changes.
   useEffect(() => {
     rawStepRef.current = 0;
+    liveStartMsRef.current = performance.now();
     publish(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey]);
 
-  // Live mode: rAF tick.
+  // Live mode: wall-clock-driven rAF tick. Pace is fixed at VIRTUAL_FPS
+  // regardless of monitor refresh rate, so the same animation arc takes
+  // the same real time on 60Hz, 120Hz, and 144Hz displays.
   useEffect(() => {
     if (paused) return;
     let id: number;
-    const tick = () => {
-      rawStepRef.current += 1;
-      publish(rawStepRef.current);
+    // Anchor "step 0" to right now, biased by however many steps we
+    // already advanced (so unpausing/reseeding does not jump backwards).
+    const startMs = performance.now() - rawStepRef.current * MS_PER_VIRTUAL_STEP;
+    liveStartMsRef.current = startMs;
+    const tick = (now: number) => {
+      const elapsed = now - liveStartMsRef.current;
+      const next = Math.max(rawStepRef.current, Math.floor(elapsed / MS_PER_VIRTUAL_STEP));
+      if (next !== rawStepRef.current) {
+        rawStepRef.current = next;
+        publish(next);
+      }
       id = requestAnimationFrame(tick);
     };
     id = requestAnimationFrame(tick);

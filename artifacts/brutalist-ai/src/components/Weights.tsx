@@ -34,11 +34,15 @@ const ROW_HEIGHT_PX = 22;
 // CONVERGE feel like an active "learning" model; HOLD reads as settled —
 // most ticks are no-ops, with the occasional slow drift.
 function flickerCountForPhase(phase: Phase, prng: SeededPrng): number {
-  const r = prng(); // always consumed so PRNG state is phase-independent
-  if (phase === 'disperse') return 2;
-  if (phase === 'converge') return 1;
-  // hold: ~25% of ticks fire one flicker
-  return r < 0.25 ? 1 : 0;
+  prng(); // always consumed so PRNG state is phase-independent
+  // Tuned at the existing 400ms tick interval (~2.5 ticks/sec):
+  //   disperse → 3 rows/tick (~7.5 flickers/sec, busiest)
+  //   converge → 2 rows/tick (~5 flickers/sec)
+  //   hold     → 1 row/tick  (~2.5 flickers/sec, matches pre-coupling
+  //              baseline so HOLD never reads as a dead panel)
+  if (phase === 'disperse') return 3;
+  if (phase === 'converge') return 2;
+  return 1;
 }
 
 export function Weights({ seedData, palette, paused = false, stepFrame = 0 }: WeightsProps) {
