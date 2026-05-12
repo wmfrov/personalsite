@@ -11,7 +11,6 @@
   },
   "contact": {
     "email": "will@willziegler.com",
-  },
     "links": [
       {
         "label": "GITHUB",
@@ -29,13 +28,12 @@
     "intro": "Tools I reach for daily, and a few I just love.",
     "groups": [
       {
-        "title": "coming soon",
+        "title": "coming soon"
       }
     ]
-
   },
   "scratchpad": {
-    "intro": "Half-formed thoughts and short notes. "
+    "intro": "Half-formed thoughts and short notes. New ones go in content/scratchpad/ as YYYY-MM-DD-slug.md with a frontmatter title and date."
   },
   "projects": [
     {
