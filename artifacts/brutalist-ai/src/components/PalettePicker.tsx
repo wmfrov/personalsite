@@ -101,7 +101,7 @@ export function PalettePicker({ palette, setPalette }: PalettePickerProps) {
         <div
           role="listbox"
           aria-label="Choose palette"
-          className="absolute left-0 top-full mt-1 z-50 border-[3px] py-1"
+          className="absolute left-0 bottom-full mb-1 z-50 border-[3px] py-1"
           style={{
             borderColor: 'var(--ink)',
             background: 'var(--bg)',
