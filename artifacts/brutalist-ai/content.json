@@ -11,6 +11,7 @@
   },
   "contact": {
     "email": "will@willziegler.com",
+  },
     "links": [
       {
         "label": "GITHUB",
@@ -31,9 +32,16 @@
         "title": "coming soon",
       }
     ]
+    ],
+   
+  
+  "uses": {
+    "intro": "coming soon"
+    
+
   },
   "scratchpad": {
-    "intro": "Half-formed thoughts and short notes. New ones go in content/scratchpad/ as YYYY-MM-DD-slug.md with a frontmatter title and date."
+    "intro": "Half-formed thoughts and short notes. "
   },
   "projects": [
     {
@@ -43,5 +51,7 @@
       "year": "2026",
       "href": "https://github.com/yourhandle/brutalist-ai"
     }
+    },
+    
   ]
 }

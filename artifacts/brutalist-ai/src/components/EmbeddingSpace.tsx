@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SeedData, derivePrng, PanelSlot, SeededPrng } from '../lib/hash';
 import { Palette } from '../lib/palettes';
 import { generateEmbeddingTokens } from '../lib/tokens';
@@ -7,7 +7,7 @@ import {
   HOLD_PHASE_START_STEP,
   computeCycle,
 } from '../lib/trainingCycle';
-import { useCycleRawStep } from '../contexts/TrainingCycleContext';
+import { useCycleStore } from '../contexts/TrainingCycleContext';
 
 // Spring damping that approximates `${SNAP_EASING}` settling over ~SNAP_DURATION_MS:
 // after a snap-jump teleports `baseX/baseY`, the per-frame spring (stiffness=lag*1.4,
@@ -24,22 +24,8 @@ const TRAIL_LIFETIME_MS = 900;
 // `TrainingCycleContext`. The embedding consumes that signal and
 // remains the visual writer (dot positions, snap-jumps, per-epoch
 // re-randomization).
-// Gaussian sigma around the cluster centroid at peak convergence. Cluster
-// centroids sit at ~0.27 / 0.73 (≈0.46 apart), so a sigma of 0.11 gives
-// each blob a ~2σ visual radius near 0.22 — adjacent clusters reach the
-// 0.5 midline and softly overlap there, while still leaving four
-// distinguishable colored regions in the four quadrants.
 const HOME_SIGMA = 0.11;
-// Tiny per-frame sinusoidal jitter applied on top of the eased base,
-// driven by per-dot phases — keeps the cloud breathing even at peak
-// sharpness without breaking the cluster shape.
 const JITTER_AMP = 0.006;
-// Snap-jumps are gated to the settled hold phase only (so they don't
-// fight the migration). With a 360-tick hold (steps 900..1260) and an
-// initial offset of +30, attempts land at steps 930 / 1050 / 1170 — three
-// eligible windows per epoch, each firing with ~50% probability, so the
-// expected snap-jump count per epoch is ~1.5 (still rare relative to the
-// ~21s epoch length).
 const SNAP_PERIOD_STEPS = 120;
 const TAU = Math.PI * 2;
 
@@ -52,6 +38,15 @@ const PROX_RADIUS = 0.18;
 const K_NN = 2;
 const ATTN_TOP_K = 5;
 const ATTN_TEMPERATURE = 0.06;
+
+// Spatial grid cell size = PROX_RADIUS so the 3x3 cell neighborhood around
+// any dot is guaranteed to contain every other dot within PROX_RADIUS. This
+// makes prox-edge computation O(N + edges) and seeds k-NN candidates from a
+// small local set instead of a full N×N sort. For k-NN we keep a fallback
+// to a full scan whenever the grid neighborhood doesn't have enough close
+// candidates, so the output is byte-identical to the original O(N²) version.
+const GRID_CELL = PROX_RADIUS;
+const GRID_DIM = Math.max(1, Math.ceil(1 / GRID_CELL));
 
 type ConnectionMode = 'fog' | 'attn';
 
@@ -76,34 +71,20 @@ interface Dot {
   label: string;
   lag: number;
   isYou: boolean;
-  cluster: number;        // 0..NUM_CLUSTERS-1 (cluster 0 = ink-tinted neutral)
-  shape: number;          // 0=circle 1=square 2=triangle 3=diamond 4=plus
-  size: number;           // pixel side length
-  pinned: boolean;        // always-show label
-  /** Cluster-converged target ("trained" position) for the CURRENT epoch.
-   *  Resampled at every epoch reset from `clusterCentroidX/Y` + Gaussian
-   *  (using animPrng) so snap-jumps can't permanently degrade cluster
-   *  purity — each new epoch restores a clean home. */
+  cluster: number;
+  shape: number;
+  size: number;
+  pinned: boolean;
   homeX: number;
   homeY: number;
-  /** Random init position for the current epoch (uniform across panel).
-   *  Resampled each epoch reset from the animation PRNG. */
   startX: number;
   startY: number;
-  /** Position the dot was at when the current epoch began. The DISPERSE
-   *  phase eases from here to `startX/Y` so the re-randomization is
-   *  visually smooth instead of a hard cut. */
   disperseFromX: number;
   disperseFromY: number;
-  /** Stable cluster centroid for this dot — the anchor home positions
-   *  re-jitter around. Set once at init; never changes after that, so
-   *  long-run cluster purity is preserved across many epochs. */
   clusterCentroidX: number;
   clusterCentroidY: number;
-  /** Per-dot phases for the breathing jitter overlay. */
   jitterPhaseX: number;
   jitterPhaseY: number;
-  /** Spring velocity used by the cursor-attraction integrator (overshoot). */
   svx: number;
   svy: number;
 }
@@ -132,30 +113,83 @@ interface ClusterMeta {
 }
 
 function gaussian(prng: SeededPrng): number {
-  // Box–Muller (only need one component).
   const u = Math.max(1e-9, prng());
   const v = prng();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-// Connection-layer types and pure helpers. Exported only at module scope so
-// they participate in cheap useMemo caching keyed on a quantized position
-// snapshot (positions hashed to 1e-3, see `posKey` in EmbeddingSpace).
+// ───────────────────────────────────────────────────────────────────
+// Spatial grid + edge helpers (pure, snapshot-stable)
+// ───────────────────────────────────────────────────────────────────
+
 type ProxEdge = { x1: number; y1: number; x2: number; y2: number; dist: number };
 type KnnEdge = { x1: number; y1: number; x2: number; y2: number; cluster: number };
 type AttnEdge = { x1: number; y1: number; x2: number; y2: number; weight: number; targetId: number };
 
-function computeProxEdges(dots: Dot[]): ProxEdge[] {
-  const out: ProxEdge[] = [];
+interface SpatialGrid {
+  cells: number[][];
+  dim: number;
+}
+
+function buildGrid(dots: Dot[]): SpatialGrid {
+  const dim = GRID_DIM;
+  const cells: number[][] = new Array(dim * dim);
+  for (let i = 0; i < cells.length; i++) cells[i] = [];
   for (let i = 0; i < dots.length; i++) {
-    const di = dots[i];
-    for (let j = i + 1; j < dots.length; j++) {
-      const dj = dots[j];
-      const dx = dj.x - di.x;
-      const dy = dj.y - di.y;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d <= PROX_RADIUS) {
-        out.push({ x1: di.x, y1: di.y, x2: dj.x, y2: dj.y, dist: d });
+    const d = dots[i];
+    const cx = Math.min(dim - 1, Math.max(0, Math.floor(d.x / GRID_CELL)));
+    const cy = Math.min(dim - 1, Math.max(0, Math.floor(d.y / GRID_CELL)));
+    cells[cy * dim + cx].push(i);
+  }
+  return { cells, dim };
+}
+
+/**
+ * All pairs within PROX_RADIUS. Iterates cell pairs in the lower/right half
+ * of the 3×3 neighborhood so each pair is visited exactly once. Output is
+ * the same edge set as the original O(N²) version (order may differ but
+ * the canvas painter is order-agnostic).
+ */
+function computeProxEdges(dots: Dot[], grid?: SpatialGrid): ProxEdge[] {
+  const out: ProxEdge[] = [];
+  const g = grid ?? buildGrid(dots);
+  const r2 = PROX_RADIUS * PROX_RADIUS;
+  const dim = g.dim;
+  for (let cy = 0; cy < dim; cy++) {
+    for (let cx = 0; cx < dim; cx++) {
+      const cellA = g.cells[cy * dim + cx];
+      if (cellA.length === 0) continue;
+      // Visit each unordered cell-pair exactly once: same cell + the four
+      // neighbors at offsets (+1,0), (-1,+1), (0,+1), (+1,+1).
+      const offsets: [number, number][] = [
+        [0, 0],
+        [1, 0],
+        [-1, 1],
+        [0, 1],
+        [1, 1],
+      ];
+      for (const [dx, dy] of offsets) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || nx >= dim || ny < 0 || ny >= dim) continue;
+        const cellB = g.cells[ny * dim + nx];
+        if (cellB.length === 0) continue;
+        const sameCell = dx === 0 && dy === 0;
+        for (let ai = 0; ai < cellA.length; ai++) {
+          const i = cellA[ai];
+          const di = dots[i];
+          const startBi = sameCell ? ai + 1 : 0;
+          for (let bi = startBi; bi < cellB.length; bi++) {
+            const j = cellB[bi];
+            const dj = dots[j];
+            const ddx = dj.x - di.x;
+            const ddy = dj.y - di.y;
+            const d2 = ddx * ddx + ddy * ddy;
+            if (d2 <= r2) {
+              out.push({ x1: di.x, y1: di.y, x2: dj.x, y2: dj.y, dist: Math.sqrt(d2) });
+            }
+          }
+        }
       }
     }
   }
@@ -164,28 +198,59 @@ function computeProxEdges(dots: Dot[]): ProxEdge[] {
 
 /**
  * Undirected k-nearest-neighbor edges, deduped by ordered index pair.
- * `sameClusterOnly=true` keeps only edges between dots that share a cluster
- * (FOG mode — produces the colored cluster web that mirrors the canvas
- * mockup). `false` keeps every k-NN edge for use as a quiet ink underlay
- * in ATTN mode.
+ * Candidates come from the dot's own cell + 8 neighbors; if the K-th
+ * candidate's distance is ≥ GRID_CELL (or there aren't enough candidates)
+ * we fall back to a full scan for that dot — guaranteeing the same K
+ * nearest neighbors as the original implementation.
  */
-function computeKnnEdges(dots: Dot[], sameClusterOnly: boolean): KnnEdge[] {
+function computeKnnEdges(dots: Dot[], sameClusterOnly: boolean, grid?: SpatialGrid): KnnEdge[] {
   const out: KnnEdge[] = [];
   if (dots.length === 0) return out;
+  const g = grid ?? buildGrid(dots);
   const seen = new Set<number>();
   const stride = dots.length;
+  const dim = g.dim;
+
   for (let i = 0; i < dots.length; i++) {
     const di = dots[i];
-    const cands: { idx: number; dist: number }[] = [];
-    for (let j = 0; j < dots.length; j++) {
-      if (j === i) continue;
-      const dj = dots[j];
-      const dx = dj.x - di.x;
-      const dy = dj.y - di.y;
-      cands.push({ idx: j, dist: Math.sqrt(dx * dx + dy * dy) });
+    const cx = Math.min(dim - 1, Math.max(0, Math.floor(di.x / GRID_CELL)));
+    const cy = Math.min(dim - 1, Math.max(0, Math.floor(di.y / GRID_CELL)));
+    let cands: { idx: number; dist: number }[] = [];
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || nx >= dim || ny < 0 || ny >= dim) continue;
+        const cell = g.cells[ny * dim + nx];
+        for (const j of cell) {
+          if (j === i) continue;
+          const dj = dots[j];
+          const ddx = dj.x - di.x;
+          const ddy = dj.y - di.y;
+          cands.push({ idx: j, dist: Math.sqrt(ddx * ddx + ddy * ddy) });
+        }
+      }
     }
     cands.sort((a, b) => a.dist - b.dist);
-    for (let k = 0; k < Math.min(K_NN, cands.length); k++) {
+    // Fallback: if we don't have enough close candidates, the K-th nearest
+    // might live outside the 3×3 neighborhood. Re-scan all dots so the
+    // result matches the original O(N²) version exactly.
+    const needFallback =
+      cands.length < K_NN ||
+      (cands.length >= K_NN && cands[K_NN - 1].dist >= GRID_CELL);
+    if (needFallback) {
+      cands = [];
+      for (let j = 0; j < dots.length; j++) {
+        if (j === i) continue;
+        const dj = dots[j];
+        const ddx = dj.x - di.x;
+        const ddy = dj.y - di.y;
+        cands.push({ idx: j, dist: Math.sqrt(ddx * ddx + ddy * ddy) });
+      }
+      cands.sort((a, b) => a.dist - b.dist);
+    }
+    const lim = Math.min(K_NN, cands.length);
+    for (let k = 0; k < lim; k++) {
       const n = cands[k];
       const a = i < n.idx ? i : n.idx;
       const b = i < n.idx ? n.idx : i;
@@ -200,27 +265,29 @@ function computeKnnEdges(dots: Dot[], sameClusterOnly: boolean): KnnEdge[] {
   return out;
 }
 
-/**
- * Top-K attention edges from the "you" dot, weighted by softmax(-dist/τ).
- * Returns [] if no "you" dot is present (e.g. before initial dot population).
- */
 function computeAttnEdges(dots: Dot[]): AttnEdge[] {
-  const you = dots.find(d => d.isYou);
+  let you: Dot | undefined;
+  for (const d of dots) {
+    if (d.isYou) {
+      you = d;
+      break;
+    }
+  }
   if (!you) return [];
-  const others = dots
-    .filter(d => !d.isYou)
-    .map(d => {
-      const dx = d.x - you.x;
-      const dy = d.y - you.y;
-      return { id: d.id, x: d.x, y: d.y, dist: Math.sqrt(dx * dx + dy * dy) };
-    })
-    .sort((a, b) => a.dist - b.dist)
-    .slice(0, ATTN_TOP_K);
-  const scores = others.map(o => Math.exp(-o.dist / ATTN_TEMPERATURE));
+  const others: { id: number; x: number; y: number; dist: number }[] = [];
+  for (const d of dots) {
+    if (d.isYou) continue;
+    const dx = d.x - you.x;
+    const dy = d.y - you.y;
+    others.push({ id: d.id, x: d.x, y: d.y, dist: Math.sqrt(dx * dx + dy * dy) });
+  }
+  others.sort((a, b) => a.dist - b.dist);
+  const top = others.slice(0, ATTN_TOP_K);
+  const scores = top.map(o => Math.exp(-o.dist / ATTN_TEMPERATURE));
   const sum = scores.reduce((a, b) => a + b, 0) || 1;
-  return others.map((o, i) => ({
-    x1: you.x,
-    y1: you.y,
+  return top.map((o, i) => ({
+    x1: you!.x,
+    y1: you!.y,
     x2: o.x,
     y2: o.y,
     weight: scores[i] / sum,
@@ -228,44 +295,104 @@ function computeAttnEdges(dots: Dot[]): AttnEdge[] {
   }));
 }
 
+// ───────────────────────────────────────────────────────────────────
+// Header EPOCH/STEP chip — subscribes directly to the cycle store so
+// the chip text stays exactly in sync with the rendered frame in both
+// live and paused/export mode (essential for deterministic export
+// captures). React only re-renders this tiny <span>, not the whole
+// panel, so the perf cost is negligible.
+// ───────────────────────────────────────────────────────────────────
+
+function CycleHeaderChip({ palette }: { palette: Palette }) {
+  const store = useCycleStore();
+  const [snap, setSnap] = useState(() => {
+    const c = store.get();
+    return { epoch: c.epoch, step: c.step };
+  });
+  useEffect(() => {
+    const update = () => {
+      const c = store.get();
+      setSnap(prev =>
+        prev.epoch === c.epoch && prev.step === c.step ? prev : { epoch: c.epoch, step: c.step },
+      );
+    };
+    update();
+    return store.subscribe(update);
+  }, [store]);
+  return (
+    <span style={{ color: palette.bg, opacity: 0.5 }}>
+      EPOCH {snap.epoch.toString().padStart(2, '0')} · STEP {snap.step.toString().padStart(4, '0')} · N={NUM_DOTS}
+    </span>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Main panel
+// ───────────────────────────────────────────────────────────────────
+
 export function EmbeddingSpace({
   seedData,
   palette,
   accent,
   paused = false,
-  stepFrame = 0,
 }: EmbeddingSpaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // `dots` only changes on init or scrub-restore — never every physics
+  // tick. Per-frame motion is applied imperatively to dot DOM nodes.
   const [dots, setDots] = useState<Dot[]>([]);
   const [hoveredDotId, setHoveredDotId] = useState<number | null>(null);
   const [nearestNeighbors, setNearestNeighbors] = useState<number[]>([]);
   const [clusters, setClusters] = useState<ClusterMeta[]>([]);
   const [mode, setMode] = useState<ConnectionMode>('fog');
-  // Surfaced for the EPOCH/STEP header chip; updated every physics tick.
-  const [epochStep, setEpochStep] = useState({ epoch: 0, step: 0 });
-  const [, forceTick] = useState(0); // re-render trails over time even if dots don't change
+  // Low-rate tick used by ATTN-mode chips so the displayed % refreshes
+  // a few times per second without forcing a 60fps re-render of every
+  // dot. Cheap because dot positions are written imperatively, not
+  // through React state.
+  const [, setAttnTick] = useState(0);
 
   const mouseRef = useRef({ x: -1000, y: -1000, active: false });
   const dotsRef = useRef<Dot[]>([]);
+  const dotElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const animPrngRef = useRef<SeededPrng | null>(null);
   const historyRef = useRef<FrameSnapshot[]>([]);
   const trailsRef = useRef<Trail[]>([]);
-  // Training-arc state. The canonical epoch/step/phase signal lives in
-  // `TrainingCycleContext`; embedding tracks the last-seen rawStep so it
-  // can compute deltas and run physics for each newly-elapsed tick.
   const lastRawStepRef = useRef(0);
   const lastEpochRef = useRef(0);
   const nextSnapStepRef = useRef(HOLD_PHASE_START_STEP + 30);
 
-  const cycleRawStep = useCycleRawStep();
+  // Container pixel dimensions, kept up-to-date via ResizeObserver. All
+  // canvas painting and DOM transforms read from this ref so we never pay
+  // for a getBoundingClientRect per frame.
+  const sizeRef = useRef({ w: 0, h: 0, dpr: 1 });
 
+  // Refs for state that paintFrame needs but should not cause the cycle
+  // subscription to re-bind. These are assigned during render (below,
+  // before the return statement) so the synchronous useLayoutEffect
+  // paintFrame call sees the latest values — important in paused mode
+  // where there is no cycle tick to drive a follow-up paint.
+  const modeRef = useRef(mode);
+  const paletteRef = useRef(palette);
+  const accentRef = useRef(accent);
+  const hoveredRef = useRef<number | null>(hoveredDotId);
+  const nnRef = useRef<number[]>(nearestNeighbors);
+  const pausedRef = useRef(paused);
+  // Cached container DOMRect so the per-tick physics step doesn't pay
+  // for a getBoundingClientRect every frame. Refreshed by the
+  // ResizeObserver and on the next mouse-move after a possible scroll.
+  const rectRef = useRef<DOMRect | null>(null);
+  // Latest attention weights by dotId, updated on every paint so React
+  // chip rendering can read them via the slow attnTick refresh.
+  const attnWeightsRef = useRef<Map<number, number>>(new Map());
+
+  const store = useCycleStore();
+
+  // Initial dot population (re-runs only on seed change).
   useEffect(() => {
     const prng = derivePrng(seedData, PanelSlot.EmbeddingLayout);
-    // Separate animation PRNG so snap-jumps stay reproducible per seed.
     const animPrng = derivePrng(seedData, PanelSlot.EmbeddingAnim);
     animPrngRef.current = animPrng;
 
-    // Cluster centroids spread across panel with seeded jitter.
     const baseCentroids = [
       { x: 0.27, y: 0.28 },
       { x: 0.73, y: 0.27 },
@@ -281,9 +408,6 @@ export function EmbeddingSpace({
     const tokens = generateEmbeddingTokens(NUM_DOTS - 1, prng);
     const newDots: Dot[] = [];
 
-    // "You" dot uses precise position from seedData so it stays seed-stable.
-    // It does not participate in the training arc — it's the fixed reference
-    // point across all epochs.
     newDots.push({
       id: 0,
       baseX: seedData.youX,
@@ -296,7 +420,7 @@ export function EmbeddingSpace({
       lag: 0.1,
       isYou: true,
       cluster: -1,
-      shape: 1, // square (matches the "you" emphasis)
+      shape: 1,
       size: 14,
       pinned: true,
       homeX: seedData.youX,
@@ -313,17 +437,14 @@ export function EmbeddingSpace({
       svy: 0,
     });
 
-    // Pre-pick which non-"you" indices get pinned labels (deterministic).
     const pinnedIds = new Set<number>();
     while (pinnedIds.size < NUM_PINNED) {
       pinnedIds.add(1 + Math.floor(prng() * (NUM_DOTS - 1)));
     }
 
     for (let i = 0; i < NUM_DOTS - 1; i++) {
-      const cluster = i % NUM_CLUSTERS; // round-robin → ~equal-sized clusters
+      const cluster = i % NUM_CLUSTERS;
       const c = newClusters[cluster];
-      // Tight Gaussian scatter around the centroid: this is the converged
-      // "trained" target. Clamp inside [0.04..0.96] to keep it on-canvas.
       let homeX = c.centroidX + gaussian(prng) * HOME_SIGMA;
       let homeY = c.centroidY + gaussian(prng) * HOME_SIGMA;
       homeX = Math.max(0.04, Math.min(0.96, homeX));
@@ -335,9 +456,6 @@ export function EmbeddingSpace({
       const jitterPhaseX = prng() * TAU;
       const jitterPhaseY = prng() * TAU;
 
-      // Random init position (uniform across the panel) for epoch 0,
-      // sampled from the animation PRNG so subsequent epoch resets stay on
-      // a single reproducible stream.
       const startX = 0.04 + animPrng() * 0.92;
       const startY = 0.04 + animPrng() * 0.92;
 
@@ -360,9 +478,6 @@ export function EmbeddingSpace({
         homeY,
         startX,
         startY,
-        // Epoch 0 has no "previous resting position"; setting disperseFrom
-        // = startX/Y makes the DISPERSE phase a no-op (dot sits at its
-        // random start) before the visible CONVERGE migration begins.
         disperseFromX: startX,
         disperseFromY: startY,
         clusterCentroidX: c.centroidX,
@@ -380,19 +495,14 @@ export function EmbeddingSpace({
     lastRawStepRef.current = 0;
     lastEpochRef.current = 0;
     nextSnapStepRef.current = HOLD_PHASE_START_STEP + 30;
-    setEpochStep({ epoch: 0, step: 0 });
     historyRef.current = [];
     trailsRef.current = [];
   }, [seedData]);
 
+  // Pure mutation of dotsRef — no React state writes per tick.
   const stepPhysics = (cycle: CycleState) => {
-    // One call advances exactly one shared tick. Cycle (epoch/step/phase)
-    // is provided by the `TrainingCycleProvider` and is byte-identical
-    // across every panel so the dashboard reads as one model training.
+    const isPaused = pausedRef.current;
 
-    // Epoch boundary: smoothly re-randomize. Detected by epoch-number
-    // change rather than `step >= TOTAL` so we always run on the *new*
-    // epoch's first tick regardless of how the cycle was driven.
     if (cycle.epoch !== lastEpochRef.current) {
       const ap = animPrngRef.current;
       if (ap) {
@@ -402,8 +512,8 @@ export function EmbeddingSpace({
           d.disperseFromY = d.y;
           d.startX = 0.04 + ap() * 0.92;
           d.startY = 0.04 + ap() * 0.92;
-          let nh = d.clusterCentroidX + gaussian(ap) * HOME_SIGMA;
-          let nv = d.clusterCentroidY + gaussian(ap) * HOME_SIGMA;
+          const nh = d.clusterCentroidX + gaussian(ap) * HOME_SIGMA;
+          const nv = d.clusterCentroidY + gaussian(ap) * HOME_SIGMA;
           d.homeX = Math.max(0.04, Math.min(0.96, nh));
           d.homeY = Math.max(0.04, Math.min(0.96, nv));
         }
@@ -412,9 +522,6 @@ export function EmbeddingSpace({
       nextSnapStepRef.current = HOLD_PHASE_START_STEP + 30;
     }
 
-    // Snap-jump: only eligible during the settled hold phase (suppressed
-    // during DISPERSE + CONVERGE so it doesn't fight the migration).
-    // Step-keyed schedule keeps it deterministic across pause/scrub.
     const sStep = cycle.step;
     const inHold = sStep >= HOLD_PHASE_START_STEP;
     if (inHold && sStep >= nextSnapStepRef.current) {
@@ -424,12 +531,6 @@ export function EmbeddingSpace({
         const idx = 1 + Math.floor(ap() * (dotsRef.current.length - 1));
         const d = dotsRef.current[idx];
         if (d && !d.isYou) {
-          // Intentional hard-cut teleport on top of the converged target —
-          // moves the dot's home so the snap reads as "this token just
-          // remapped within the embedding space". The mutation is bounded
-          // to the current epoch: the next epoch reset resamples home from
-          // `clusterCentroidX/Y`, restoring cluster purity. Trails are a
-          // LIVE-only decoration (see paused-mode comment in render).
           const fromX = d.x;
           const fromY = d.y;
           const newHomeX = 0.05 + ap() * 0.9;
@@ -442,7 +543,7 @@ export function EmbeddingSpace({
           d.y = newHomeY;
           d.targetX = newHomeX;
           d.targetY = newHomeY;
-          if (!paused) {
+          if (!isPaused) {
             trailsRef.current.push({
               fromX,
               fromY,
@@ -456,59 +557,44 @@ export function EmbeddingSpace({
       }
     }
 
-    // Drop expired trails (LIVE-only decoration).
     if (trailsRef.current.length > 0) {
       const now = performance.now();
       trailsRef.current = trailsRef.current.filter(t => now - t.startedAt < TRAIL_LIFETIME_MS);
     }
 
-    const container = containerRef.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const mouseActive = mouseRef.current.active;
+    const w = sizeRef.current.w;
+    const h = sizeRef.current.h;
+    const containerRect = rectRef.current;
+    const mouseActive = mouseRef.current.active && !!containerRect && w > 0 && h > 0;
 
-    // Training-arc phase + eased phase progress. DISPERSE eases from the
-    // dot's previous resting position to the new random start; CONVERGE
-    // eases from the random start to the cluster home; HOLD pins at home.
-    // Ease-out cubic in both moving phases — early motion feels fast, the
-    // tail of each phase feels patient. The phase comes from the shared
-    // cycle so the panel stays in lockstep with every other panel.
     const phase = cycle.phase;
     const phaseProgress = phase === 'hold' ? 1 : cycle.phaseProgress;
     const eased = phase === 'hold' ? 1 : 1 - Math.pow(1 - phaseProgress, 3);
 
-    const newDots = [...dotsRef.current];
-
-    for (let i = 0; i < newDots.length; i++) {
-      const dot = newDots[i];
+    const dotsArr = dotsRef.current;
+    for (let i = 0; i < dotsArr.length; i++) {
+      const dot = dotsArr[i];
 
       if (!dot.isYou) {
-        // Pick the lerp endpoints based on the current phase. Then overlay
-        // a small per-dot sinusoidal jitter so even at peak sharpness the
-        // cluster keeps breathing. Pure function of (step, dot fields) →
-        // fully deterministic, snapshot-stable.
         let fromX: number, fromY: number, toX: number, toY: number;
         if (phase === 'disperse') {
           fromX = dot.disperseFromX; fromY = dot.disperseFromY;
           toX = dot.startX;          toY = dot.startY;
         } else {
-          // converge | hold (eased = 1 in hold so this collapses to home)
           fromX = dot.startX; fromY = dot.startY;
           toX = dot.homeX;    toY = dot.homeY;
         }
         const easedX = fromX + (toX - fromX) * eased;
         const easedY = fromY + (toY - fromY) * eased;
-        // Jitter is keyed off the per-epoch step so it restarts in
-        // phase at each epoch boundary (matches the old behavior).
         const jx = JITTER_AMP * Math.sin(sStep * 0.04 + dot.jitterPhaseX);
         const jy = JITTER_AMP * Math.cos(sStep * 0.05 + dot.jitterPhaseY);
         dot.baseX = Math.max(0, Math.min(1, easedX + jx));
         dot.baseY = Math.max(0, Math.min(1, easedY + jy));
       }
 
-      if (mouseActive && !paused) {
-        const mx = (mouseRef.current.x - rect.left) / rect.width;
-        const my = (mouseRef.current.y - rect.top) / rect.height;
+      if (mouseActive && !isPaused && containerRect) {
+        const mx = (mouseRef.current.x - containerRect.left) / containerRect.width;
+        const my = (mouseRef.current.y - containerRect.top) / containerRect.height;
         const dx = mx - dot.baseX;
         const dy = my - dot.baseY;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -520,74 +606,294 @@ export function EmbeddingSpace({
         dot.targetY = dot.baseY;
       }
 
-      // Spring + damping for cursor-attract overshoot.
       const stiffness = dot.lag * 1.4;
       dot.svx = dot.svx * SPRING_DAMPING + (dot.targetX - dot.x) * stiffness;
       dot.svy = dot.svy * SPRING_DAMPING + (dot.targetY - dot.y) * stiffness;
       dot.x += dot.svx;
       dot.y += dot.svy;
     }
-
-    dotsRef.current = newDots;
-    setDots(newDots);
-    setEpochStep({ epoch: cycle.epoch, step: cycle.step });
   };
 
-  // Drive the embedding from the shared training cycle. Every cycle tick
-  // advances the dot physics by exactly one step. In paused/export mode
-  // the cycle's rawStep equals `stepFrame`, so the embedding's response
-  // stays a pure function of the slider position. Snapshots are recorded
-  // only in paused mode so backward scrubbing can restore exactly.
+  // Imperative paint: writes dot transforms + redraws the edges canvas.
+  // Pure function of dotsRef + the *Ref state mirrors. Called from the
+  // cycle subscription and from a useLayoutEffect on every React render.
+  const paintFrame = () => {
+    const w = sizeRef.current.w;
+    const h = sizeRef.current.h;
+    if (w === 0 || h === 0) return;
+
+    const dotsArr = dotsRef.current;
+    const els = dotElsRef.current;
+    for (let i = 0; i < dotsArr.length; i++) {
+      const d = dotsArr[i];
+      const el = els.get(d.id);
+      if (el) {
+        el.style.transform = `translate3d(${d.x * w}px, ${d.y * h}px, 0) translate(-50%, -50%)`;
+      }
+    }
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = sizeRef.current.dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    const palette = paletteRef.current;
+    const accent = accentRef.current;
+    const mode = modeRef.current;
+    const isPaused = pausedRef.current;
+    const colorForCluster = (cluster: number): string => {
+      if (cluster === 0) return palette.ink;
+      if (cluster === 1) return palette.accent1;
+      if (cluster === 2) return palette.accent2;
+      return palette.accent3;
+    };
+
+    const grid = buildGrid(dotsArr);
+
+    // FOG: prox underlay, then colored k-NN web.
+    if (mode === 'fog') {
+      const proxEdges = computeProxEdges(dotsArr, grid);
+      ctx.lineWidth = 0.6;
+      ctx.strokeStyle = palette.ink;
+      for (const e of proxEdges) {
+        const op = (1 - e.dist / PROX_RADIUS) * 0.32;
+        if (op <= 0.01) continue;
+        ctx.globalAlpha = op;
+        ctx.beginPath();
+        ctx.moveTo(e.x1 * w, e.y1 * h);
+        ctx.lineTo(e.x2 * w, e.y2 * h);
+        ctx.stroke();
+      }
+    }
+
+    const knnEdges = computeKnnEdges(dotsArr, mode === 'fog', grid);
+    if (mode === 'fog') {
+      ctx.lineWidth = 1.6;
+      ctx.globalAlpha = 0.85;
+      for (const e of knnEdges) {
+        ctx.strokeStyle = colorForCluster(e.cluster);
+        ctx.beginPath();
+        ctx.moveTo(e.x1 * w, e.y1 * h);
+        ctx.lineTo(e.x2 * w, e.y2 * h);
+        ctx.stroke();
+      }
+    } else {
+      ctx.strokeStyle = palette.ink;
+      ctx.lineWidth = 0.8;
+      ctx.globalAlpha = 0.18;
+      for (const e of knnEdges) {
+        ctx.beginPath();
+        ctx.moveTo(e.x1 * w, e.y1 * h);
+        ctx.lineTo(e.x2 * w, e.y2 * h);
+        ctx.stroke();
+      }
+    }
+
+    // ATTN: ink halo + accent stroke from "you" to top-K.
+    if (mode === 'attn') {
+      const attnEdges = computeAttnEdges(dotsArr);
+      attnWeightsRef.current = new Map();
+      for (const e of attnEdges) attnWeightsRef.current.set(e.targetId, e.weight);
+      for (const e of attnEdges) {
+        const lw = 1 + e.weight * 7;
+        ctx.strokeStyle = palette.ink;
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = lw + 2;
+        ctx.beginPath();
+        ctx.moveTo(e.x1 * w, e.y1 * h);
+        ctx.lineTo(e.x2 * w, e.y2 * h);
+        ctx.stroke();
+
+        ctx.strokeStyle = accent;
+        ctx.globalAlpha = 0.85 + e.weight * 0.15;
+        ctx.lineWidth = lw;
+        ctx.beginPath();
+        ctx.moveTo(e.x1 * w, e.y1 * h);
+        ctx.lineTo(e.x2 * w, e.y2 * h);
+        ctx.stroke();
+      }
+    } else {
+      attnWeightsRef.current = new Map();
+    }
+
+    // Trails (LIVE-only).
+    if (!isPaused && trailsRef.current.length > 0) {
+      const now = performance.now();
+      ctx.lineWidth = 2;
+      ctx.setLineDash([2, 3]);
+      for (const t of trailsRef.current) {
+        const age = (now - t.startedAt) / TRAIL_LIFETIME_MS;
+        if (age >= 1) continue;
+        ctx.strokeStyle = colorForCluster(t.cluster);
+        ctx.globalAlpha = (1 - age) * 0.85;
+        ctx.beginPath();
+        ctx.moveTo(t.fromX * w, t.fromY * h);
+        ctx.lineTo(t.toX * w, t.toY * h);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
+    // Hover NN lines (ATTN, non-"you" hover).
+    const hovered = hoveredRef.current;
+    if (mode === 'attn' && hovered !== null && hovered !== 0) {
+      let hDot: Dot | undefined;
+      for (const d of dotsArr) {
+        if (d.id === hovered) {
+          hDot = d;
+          break;
+        }
+      }
+      if (hDot) {
+        ctx.strokeStyle = palette.ink;
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = 3;
+        for (const nId of nnRef.current) {
+          let nDot: Dot | undefined;
+          for (const d of dotsArr) {
+            if (d.id === nId) {
+              nDot = d;
+              break;
+            }
+          }
+          if (!nDot) continue;
+          ctx.beginPath();
+          ctx.moveTo(hDot.x * w, hDot.y * h);
+          ctx.lineTo(nDot.x * w, nDot.y * h);
+          ctx.stroke();
+        }
+      }
+    }
+
+    ctx.globalAlpha = 1;
+  };
+
+  // Resize observer: keep the canvas internal pixel buffer matched to the
+  // container so we can paint in CSS pixels without per-frame layout reads.
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    const apply = () => {
+      const rect = container.getBoundingClientRect();
+      rectRef.current = rect;
+      const dpr = window.devicePixelRatio || 1;
+      const w = rect.width;
+      const h = rect.height;
+      sizeRef.current = { w, h, dpr };
+      canvas.width = Math.max(1, Math.round(w * dpr));
+      canvas.height = Math.max(1, Math.round(h * dpr));
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      paintFrame();
+    };
+    apply();
+
+    const ro = new ResizeObserver(apply);
+    ro.observe(container);
+    // Page-level scroll can move the container without resizing it,
+    // which would invalidate the cached rect's left/top used for mouse
+    // attraction. Refresh on scroll (passive — never blocks).
+    const onScroll = () => {
+      rectRef.current = container.getBoundingClientRect();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Drive physics from the shared cycle store. Subscribing imperatively
+  // (instead of useSyncExternalStore) means EmbeddingSpace itself does
+  // NOT re-render every tick; only paintFrame writes to the DOM/canvas.
   useEffect(() => {
     if (dotsRef.current.length === 0 || !animPrngRef.current) return;
     const prng = animPrngRef.current;
-    const delta = cycleRawStep - lastRawStepRef.current;
-    if (delta > 0) {
-      for (let i = 0; i < delta; i++) {
-        const prevRaw = lastRawStepRef.current + i;
-        const targetRaw = prevRaw + 1;
-        if (paused) {
-          // Snapshot the *displayed* cycle (per-epoch step + epoch) so
-          // backward scrub restores the canonical EPOCH/STEP header
-          // chip — including across epoch boundaries (e.g. 1259 → 0).
-          const prevCycle = computeCycle(prevRaw);
-          historyRef.current.push({
-            dots: dotsRef.current.map(d => ({ ...d })),
-            step: prevCycle.step,
-            epoch: prevCycle.epoch,
-            nextSnapStep: nextSnapStepRef.current,
-            prngState: prng.getState(),
-          });
-        }
-        stepPhysics(computeCycle(targetRaw));
-      }
-    } else if (delta < 0 && paused) {
-      let snap: FrameSnapshot | undefined;
-      for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
-      if (snap) {
-        prng.setState(snap.prngState);
-        lastEpochRef.current = snap.epoch;
-        nextSnapStepRef.current = snap.nextSnapStep;
-        dotsRef.current = snap.dots.map(d => ({ ...d }));
-        setDots(dotsRef.current);
-        setEpochStep({ epoch: snap.epoch, step: snap.step });
-      }
-    }
-    lastRawStepRef.current = cycleRawStep;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cycleRawStep, paused]);
 
-  // When entering paused/export mode, drop any in-flight trails so they
-  // never participate in the deterministic frame stream. Trails are a
-  // LIVE-only decoration (see physics step comment).
+    const handle = () => {
+      const cycle = store.get();
+      const delta = cycle.rawStep - lastRawStepRef.current;
+      if (delta > 0) {
+        for (let i = 0; i < delta; i++) {
+          const prevRaw = lastRawStepRef.current + i;
+          const targetRaw = prevRaw + 1;
+          if (pausedRef.current) {
+            const prevCycle = computeCycle(prevRaw);
+            historyRef.current.push({
+              dots: dotsRef.current.map(d => ({ ...d })),
+              step: prevCycle.step,
+              epoch: prevCycle.epoch,
+              nextSnapStep: nextSnapStepRef.current,
+              prngState: prng.getState(),
+            });
+          }
+          stepPhysics(computeCycle(targetRaw));
+        }
+      } else if (delta < 0 && pausedRef.current) {
+        let snap: FrameSnapshot | undefined;
+        for (let i = 0; i < -delta; i++) snap = historyRef.current.pop() ?? snap;
+        if (snap) {
+          prng.setState(snap.prngState);
+          lastEpochRef.current = snap.epoch;
+          nextSnapStepRef.current = snap.nextSnapStep;
+          dotsRef.current = snap.dots.map(d => ({ ...d }));
+        }
+      }
+      lastRawStepRef.current = cycle.rawStep;
+      paintFrame();
+      // In paused/export mode there is no 4Hz timer driving ATTN chip
+      // text refreshes, so each scrub step must immediately re-render
+      // chips so the displayed % stays in sync with the painted frame.
+      // Live mode skips this to preserve 60fps (chips update at 4Hz).
+      if (pausedRef.current && modeRef.current === 'attn') {
+        setAttnTick(n => (n + 1) | 0);
+      }
+    };
+
+    // Process whatever is already in the store on (re-)subscribe so the
+    // panel catches up after a seed change without waiting for the next tick.
+    handle();
+    const unsub = store.subscribe(handle);
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, dots]);
+
+  // Repaint after every React render so transform/visual state stays in
+  // sync with whatever just changed (mode toggle, hover, palette, etc.).
+  useLayoutEffect(() => {
+    paintFrame();
+  });
+
+  // Slow tick that refreshes ATTN chip percentages without a 60fps render.
+  useEffect(() => {
+    if (mode !== 'attn') return;
+    const id = setInterval(() => setAttnTick(n => (n + 1) | 0), 250);
+    return () => clearInterval(id);
+  }, [mode]);
+
+  // Drop in-flight trails on entering paused/export mode so the
+  // deterministic frame stream never carries them.
   useEffect(() => {
     if (paused) {
       trailsRef.current = [];
-      forceTick(n => n + 1);
+      paintFrame();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused]);
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    // Refresh the cached rect on the first move after a possible scroll
+    // so mouse-attraction physics keeps tracking the cursor accurately
+    // without paying for getBoundingClientRect every cycle tick.
+    const c = containerRef.current;
+    if (c) rectRef.current = c.getBoundingClientRect();
     mouseRef.current = { x: e.clientX, y: e.clientY, active: true };
   };
 
@@ -597,27 +903,49 @@ export function EmbeddingSpace({
     setNearestNeighbors([]);
   };
 
+  // Recompute nearest neighbors only on hover change. Reads from dotsRef
+  // (live positions) instead of stale `dots` state so we don't depend on
+  // the per-frame React update path. While hovering, refresh at ~6Hz so
+  // the highlighted neighbors track the cluster as dots drift.
   useEffect(() => {
     if (hoveredDotId === null || paused) return;
+    const compute = () => {
+      const arr = dotsRef.current;
+      let hover: Dot | undefined;
+      for (const d of arr) {
+        if (d.id === hoveredDotId) {
+          hover = d;
+          break;
+        }
+      }
+      if (!hover) return;
+      const dists: { id: number; dist: number }[] = [];
+      for (const d of arr) {
+        if (d.id === hoveredDotId) continue;
+        const dx = d.x - hover.x;
+        const dy = d.y - hover.y;
+        dists.push({ id: d.id, dist: Math.sqrt(dx * dx + dy * dy) });
+      }
+      dists.sort((a, b) => a.dist - b.dist);
+      const next = dists.slice(0, 3).map(d => d.id);
+      // Skip the setState if the list is identical — avoids needless
+      // re-renders + canvas repaints while hovering.
+      const prev = nnRef.current;
+      if (
+        prev.length === next.length &&
+        prev[0] === next[0] &&
+        prev[1] === next[1] &&
+        prev[2] === next[2]
+      ) {
+        return;
+      }
+      setNearestNeighbors(next);
+    };
+    compute();
+    const id = setInterval(compute, 160);
+    return () => clearInterval(id);
+  }, [hoveredDotId, paused]);
 
-    const hoverDot = dots.find(d => d.id === hoveredDotId);
-    if (!hoverDot) return;
-
-    const dists = dots
-      .filter(d => d.id !== hoveredDotId)
-      .map(d => ({
-        id: d.id,
-        dist: Math.sqrt(Math.pow(d.x - hoverDot.x, 2) + Math.pow(d.y - hoverDot.y, 2)),
-      }))
-      .sort((a, b) => a.dist - b.dist)
-      .slice(0, 3)
-      .map(d => d.id);
-
-    setNearestNeighbors(dists);
-  }, [hoveredDotId, dots, paused]);
-
-  // Map cluster index → palette color. Cluster 0 stays ink-tinted so the
-  // composition reads as "ink + 3 accents" instead of "4 noisy accents".
   const colorForCluster = (cluster: number): string => {
     if (cluster === 0) return palette.ink;
     if (cluster === 1) return palette.accent1;
@@ -625,45 +953,24 @@ export function EmbeddingSpace({
     return palette.accent3;
   };
 
-  // Quantize dot positions to 1e-3 to build a stable cache key. During live
-  // drift the key changes nearly every frame (recomputation is required to
-  // follow physics anyway), but during pause/export-stepping the same frame
-  // can re-render multiple times — memoization makes those re-renders free.
-  // Cluster id is folded in so cluster reassignment also invalidates the
-  // cache. Result: edge math derived only from current dot.x/dot.y so
-  // paused/step export rendering remains deterministic per mode.
-  const posKey = useMemo(() => {
-    let s = '';
-    for (const d of dots) {
-      s += ((d.x * 1000) | 0) + ',' + ((d.y * 1000) | 0) + ',' + d.cluster + ';';
-    }
-    return s;
-  }, [dots]);
+  // Sync visual-state ref mirrors during render so the synchronous
+  // useLayoutEffect paint immediately below reads up-to-date values.
+  // Mutating refs in render is allowed because it's an idempotent local
+  // assignment with no side effects; the alternative (useEffect mirror)
+  // runs AFTER useLayoutEffect, which would leave the canvas one commit
+  // stale on mode/palette/hover/paused changes — fatal in paused mode
+  // because no cycle tick would arrive to repaint.
+  modeRef.current = mode;
+  paletteRef.current = palette;
+  accentRef.current = accent;
+  hoveredRef.current = hoveredDotId;
+  nnRef.current = nearestNeighbors;
+  pausedRef.current = paused;
 
-  const proxEdges = useMemo(
-    () => (mode === 'fog' ? computeProxEdges(dots) : []),
-    // posKey captures dots' material content; recomputation is gated on it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [posKey, mode],
-  );
-  const knnEdges = useMemo(
-    () => computeKnnEdges(dots, mode === 'fog'),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [posKey, mode],
-  );
-  const attnEdges = useMemo(
-    () => (mode === 'attn' ? computeAttnEdges(dots) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [posKey, mode],
-  );
-
-  const attnWeightById = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const e of attnEdges) m.set(e.targetId, e.weight);
-    return m;
-  }, [attnEdges]);
-
-  const now = performance.now();
+  // Snapshot of attention weights for chip rendering. Refreshed via
+  // `attnTick` (5Hz) — chip percentages may lag by ~250ms, which is
+  // imperceptible for the decorative badge.
+  const attnWeightById = attnWeightsRef.current;
 
   return (
     <div className="brutalist-panel w-full h-full flex flex-col overflow-hidden">
@@ -707,9 +1014,7 @@ export function EmbeddingSpace({
               aria-label="Attention from you to top-k"
             >ATTN</button>
           </div>
-          <span style={{ color: palette.bg, opacity: 0.5 }}>
-            EPOCH {epochStep.epoch.toString().padStart(2, '0')} · STEP {epochStep.step.toString().padStart(4, '0')} · N={NUM_DOTS}
-          </span>
+          <CycleHeaderChip palette={palette} />
         </div>
       </div>
 
@@ -748,7 +1053,6 @@ export function EmbeddingSpace({
             );
           })}
 
-          {/* Numeric axis tick labels (5 per axis, every 25%) */}
           {[0, 25, 50, 75, 99].map(pct => (
             <React.Fragment key={`tlbl-${pct}`}>
               <div
@@ -781,7 +1085,6 @@ export function EmbeddingSpace({
           ))}
         </div>
 
-        {/* Dim axis labels (corner-anchored, brutalist style) */}
         {clusters[0] && (
           <>
             <div
@@ -815,139 +1118,41 @@ export function EmbeddingSpace({
           </>
         )}
 
-        {/* Connection layer (replaces cluster hulls). FOG mode: faint
-            proximity strands underneath sharper colored k-NN. ATTN mode:
-            quiet ink k-NN underlay underneath bold accent attention edges
-            from the "you" dot. Endpoints recompute every render from
-            current dot.x/dot.y so edges follow live drift. */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible">
-          {mode === 'fog' && proxEdges.map((e, i) => {
-            const op = (1 - e.dist / PROX_RADIUS) * 0.32;
-            return (
-              <line
-                key={`prox-${i}`}
-                x1={`${e.x1 * 100}%`}
-                y1={`${e.y1 * 100}%`}
-                x2={`${e.x2 * 100}%`}
-                y2={`${e.y2 * 100}%`}
-                stroke={palette.ink}
-                strokeOpacity={op}
-                strokeWidth={0.6}
-              />
-            );
-          })}
-          {knnEdges.map((e, i) => (
-            <line
-              key={`knn-${i}`}
-              x1={`${e.x1 * 100}%`}
-              y1={`${e.y1 * 100}%`}
-              x2={`${e.x2 * 100}%`}
-              y2={`${e.y2 * 100}%`}
-              stroke={mode === 'fog' ? colorForCluster(e.cluster) : palette.ink}
-              strokeOpacity={mode === 'fog' ? 0.85 : 0.18}
-              strokeWidth={mode === 'fog' ? 1.6 : 0.8}
-            />
-          ))}
-          {mode === 'attn' && attnEdges.map((e, i) => {
-            const w = 1 + e.weight * 7;
-            return (
-              <g key={`attn-${i}`}>
-                <line
-                  x1={`${e.x1 * 100}%`}
-                  y1={`${e.y1 * 100}%`}
-                  x2={`${e.x2 * 100}%`}
-                  y2={`${e.y2 * 100}%`}
-                  stroke={palette.ink}
-                  strokeOpacity={1}
-                  strokeWidth={w + 2}
-                />
-                <line
-                  x1={`${e.x1 * 100}%`}
-                  y1={`${e.y1 * 100}%`}
-                  x2={`${e.x2 * 100}%`}
-                  y2={`${e.y2 * 100}%`}
-                  stroke={accent}
-                  strokeOpacity={0.85 + e.weight * 0.15}
-                  strokeWidth={w}
-                />
-              </g>
-            );
-          })}
-        </svg>
+        {/* Single canvas replaces the two SVG layers (prox + k-NN + attn
+            edges, drift trails, hover NN lines). Painting cost is now
+            roughly proportional to edge count instead of edge count plus
+            SVG tree reconciliation. */}
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 pointer-events-none z-10"
+        />
 
-        {/* Trails + neighbor lines stay on the %-based SVG (line elements DO
-            accept percentage units for x1/y1/x2/y2 unlike polygon points). */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible">
-          {/* Drift trails (snap-jump ghosts) — LIVE-only; suppressed when
-              paused so export stepping stays byte-identical. */}
-          {!paused && trailsRef.current.map((t, i) => {
-            const age = (now - t.startedAt) / TRAIL_LIFETIME_MS;
-            if (age >= 1) return null;
-            const opacity = 1 - age;
-            const color = colorForCluster(t.cluster);
-            return (
-              <line
-                key={`trail-${i}-${t.startedAt}`}
-                x1={`${t.fromX * 100}%`}
-                y1={`${t.fromY * 100}%`}
-                x2={`${t.toX * 100}%`}
-                y2={`${t.toY * 100}%`}
-                stroke={color}
-                strokeOpacity={opacity * 0.85}
-                strokeWidth={2}
-                strokeDasharray="2 3"
-              />
-            );
-          })}
-
-          {/* Nearest-neighbor lines on hover. Suppressed in FOG mode (k-NN
-              already shown for every dot) and when hovering "you" in ATTN
-              mode (attention edges already emanate from there). */}
-          {mode === 'attn' && hoveredDotId !== null && hoveredDotId !== 0 &&
-            nearestNeighbors.map(nId => {
-              const hDot = dots.find(d => d.id === hoveredDotId);
-              const nDot = dots.find(d => d.id === nId);
-              if (!hDot || !nDot) return null;
-              return (
-                <line
-                  key={`line-${hDot.id}-${nDot.id}`}
-                  x1={`${hDot.x * 100}%`}
-                  y1={`${hDot.y * 100}%`}
-                  x2={`${nDot.x * 100}%`}
-                  y2={`${nDot.y * 100}%`}
-                  stroke={palette.ink}
-                  strokeWidth="3"
-                />
-              );
-            })}
-        </svg>
-
-        {/* Dots (DOM-positioned so per-dot mouse events keep working) */}
+        {/* Dots (DOM-positioned so per-dot mouse events keep working).
+            Position is applied imperatively to el.style.transform from
+            paintFrame; React only writes structural style here so it
+            never overwrites our per-frame transform. */}
         {dots.map(dot => {
           const isHovered = hoveredDotId === dot.id;
           const isNeighbor = nearestNeighbors.includes(dot.id);
           const attnWeight = attnWeightById.get(dot.id);
           const isAttended = attnWeight !== undefined;
           const dotColor = dot.isYou ? accent : colorForCluster(dot.cluster);
-          // The "full" token label chip shows on the same triggers as before
-          // (pinned / hover / NN). Attended-but-otherwise-unmarked dots get a
-          // separate compact %-only badge so the attention info shows without
-          // forcing a token chip on every drifting target.
           const showFullChip = dot.pinned || isHovered || isNeighbor;
-          // Pinned + attended → one merged accent chip with `· NN%` appended
-          // (matches the canvas mockup behavior for the lucky pinned-target
-          // overlap case). "you" always gets the accent treatment.
           const useAccentChip = dot.isYou || (showFullChip && isAttended);
           const showCompactBadge = !showFullChip && isAttended;
 
           return (
             <div
               key={dot.id}
+              ref={el => {
+                if (el) dotElsRef.current.set(dot.id, el);
+                else dotElsRef.current.delete(dot.id);
+              }}
               className="absolute pointer-events-auto"
               style={{
-                left: `${dot.x * 100}%`,
-                top: `${dot.y * 100}%`,
-                transform: 'translate(-50%, -50%)',
+                left: 0,
+                top: 0,
+                willChange: 'transform',
                 zIndex: dot.isYou ? 30 : isHovered ? 40 : isAttended ? 28 : isNeighbor ? 25 : dot.pinned ? 20 : 10,
               }}
               onMouseEnter={() => setHoveredDotId(dot.id)}
@@ -1008,7 +1213,6 @@ interface DotGlyphProps {
 
 function DotGlyph({ shape, size, color, ink, isYou }: DotGlyphProps) {
   const s = size;
-  // The "you" dot keeps the original square + drop-shadow emphasis from v1.
   if (isYou) {
     return (
       <div
@@ -1022,7 +1226,6 @@ function DotGlyph({ shape, size, color, ink, isYou }: DotGlyphProps) {
     );
   }
 
-  // SVG glyphs render crisp at any pixel ratio (important for export).
   return (
     <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`} style={{ display: 'block' }}>
       {shape === 0 && <circle cx={s / 2} cy={s / 2} r={s / 2} fill={color} />}
