@@ -22,26 +22,33 @@
         "value": "in/will-ziegler",
         "href": "https://www.linkedin.com/in/will-ziegler/"
       }
-    ]
+    ],
+    "availability": "happilly employed"
   },
   "uses": {
-    "intro": "Tools I reach for daily, and a few I just love.",
+    "intro": "stuff I like",
     "groups": [
       {
-        "title": "coming soon"
+        "title": "hot takes",
+        "items": [
+          { "name": "light mode", "note": "dark mode is bad for your eyes" },
+          { "name": "java is fine", "note": "..." },
+          { "name": "AI is actually good", "note": "you just have to use it right" },
+          { "name": "it's ok to be cringe", "note": "it's fun too" }
+        ]
       }
     ]
   },
   "scratchpad": {
-    "intro": "Half-formed thoughts and short notes. New ones go in content/scratchpad/ as YYYY-MM-DD-slug.md with a frontmatter title and date."
+    "intro": "Half-formed thoughts and short notes."
   },
   "projects": [
     {
-      "title": "Brutalist AI Dashboard",
-      "blurb": "Generative banner generator that turns any seed string into a deterministic LLM-training visualization.",
-      "tag": "GENERATIVE",
+      "title": "wallbing",
+      "blurb": "Wallpaper site using Bing.com images with added filter and image tagging. Hosted on github pages and deployed automatically with github actions",
+      "tag": "vibecoded",
       "year": "2026",
-      "href": "https://github.com/yourhandle/brutalist-ai"
+      "href": "https://wmfrov.github.io/wallbing/"
     }
   ]
 }
