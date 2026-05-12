@@ -49,7 +49,8 @@
       "tag": "vibecoded",
       "year": "2026",
       "repo": "https://github.com/wmfrov/wallbing",
-      "site": "https://wmfrov.github.io/wallbing/"
+      "site": "https://wmfrov.github.io/wallbing/",
+      "image": "screenshots/wallbing.png"
     },
     {
       "title": "personal website",
@@ -57,7 +58,8 @@
       "tag": "vibecoded",
       "year": "2026",
       "repo": "https://github.com/wmfrov/personalsite",
-      "site": "https://willziegler.com"
+      "site": "https://willziegler.com",
+      "image": "screenshots/personal-site.png"
     }
   ]
 }
