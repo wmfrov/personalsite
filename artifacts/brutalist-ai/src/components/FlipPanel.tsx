@@ -13,6 +13,14 @@ interface FlipPanelProps {
   regionLabel?: string;
 }
 
+// Match the CSS transition duration on `.flip-inner` (kept here so the
+// visibility-hide timing stays in lockstep with the animation).
+// `prefers-reduced-motion` collapses the CSS transition to ~0ms; the
+// visibility hide still fires after this delay, which is harmless (the
+// inactive face is invisible behind the active one, just lingers in the
+// DOM a beat longer).
+const FLIP_DURATION_MS = 600;
+
 export function FlipPanel({
   flipped,
   onFlip,
@@ -25,14 +33,21 @@ export function FlipPanel({
   return (
     <section
       className="relative h-full w-full"
-      style={{ perspective: 1400 }}
+      style={{ perspective: 1400, WebkitPerspective: 1400 }}
       aria-label={regionLabel}
     >
       <div
         className="flip-inner relative h-full w-full"
         style={{
+          // React inline styles do NOT auto-prefix transformStyle, and iOS
+          // Safari needs the prefixed variant or it silently drops the
+          // preserve-3d hint and renders both faces flat-stacked.
+          // Note: transition is set on the .flip-inner class in index.css
+          // so prefers-reduced-motion can collapse it. Keep it there.
           transformStyle: 'preserve-3d',
+          WebkitTransformStyle: 'preserve-3d',
           transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
+          WebkitTransform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
         }}
       >
         <Face hidden={flipped}>
@@ -57,14 +72,42 @@ function Face({
   back?: boolean;
   hidden: boolean;
 }) {
+  // iOS Safari fix: when a flipped face contains heavy animated SVG/canvas
+  // content (the Embedding Space panel), `backface-visibility: hidden`
+  // intermittently fails and the back-of-front shows through, ghosting
+  // behind the active face. Two-pronged defense:
+  //
+  // 1. Force each face onto its own GPU compositing layer with
+  //    `translate3d(0,0,0)` and explicit WebKit prefixes on backface +
+  //    transform. This alone resolves it on most iOS versions.
+  //
+  // 2. After the flip transition completes, set `visibility: hidden` on
+  //    the inactive face. This is the bulletproof fallback — even if the
+  //    backface-visibility rule still leaks on a given iOS version, the
+  //    inactive face is genuinely removed from the render tree once the
+  //    animation settles. We delay the hide until the flip finishes so
+  //    the rotation animation itself is unaffected.
+  const [reallyHidden, setReallyHidden] = React.useState(hidden);
+  React.useEffect(() => {
+    if (hidden) {
+      const t = setTimeout(() => setReallyHidden(true), FLIP_DURATION_MS);
+      return () => clearTimeout(t);
+    }
+    setReallyHidden(false);
+    return undefined;
+  }, [hidden]);
+
+  const baseTransform = back ? 'rotateY(180deg) translate3d(0,0,0)' : 'translate3d(0,0,0)';
   return (
     <div
       className="absolute inset-0"
       style={{
         backfaceVisibility: 'hidden',
         WebkitBackfaceVisibility: 'hidden',
-        transform: back ? 'rotateY(180deg)' : 'none',
+        transform: baseTransform,
+        WebkitTransform: baseTransform,
         pointerEvents: hidden ? 'none' : 'auto',
+        visibility: reallyHidden ? 'hidden' : 'visible',
       }}
       aria-hidden={hidden}
     >
