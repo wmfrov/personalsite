@@ -23,6 +23,15 @@
         "value": "in/will-ziegler",
         "href": "https://www.linkedin.com/in/will-ziegler/"
       }
+    ]
+  },
+  "uses": {
+    "intro": "Tools I reach for daily, and a few I just love.",
+    "groups": [
+      {
+        "title": "coming soon",
+      }
+    ]
     ],
    
   
@@ -41,6 +50,7 @@
       "tag": "GENERATIVE",
       "year": "2026",
       "href": "https://github.com/yourhandle/brutalist-ai"
+    }
     },
     
   ]
