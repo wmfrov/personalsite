@@ -48,14 +48,16 @@
       "blurb": "Wallpaper site using Bing.com images with added filter and image tagging. Hosted on github pages and deployed automatically with github actions",
       "tag": "vibecoded",
       "year": "2026",
-      "href": "https://github.com/wmfrov/wallbing"
+      "repo": "https://github.com/wmfrov/wallbing",
+      "site": "https://wmfrov.github.io/wallbing/"
     },
     {
       "title": "personal website",
       "blurb": "This website you're on right now! Features an LLM visualization, hosted on github pages and deployed automatically with github actions. Made on Replit",
       "tag": "vibecoded",
       "year": "2026",
-      "href": "https://github.com/wmfrov/personalsite"
+      "repo": "https://github.com/wmfrov/personalsite",
+      "site": "https://willziegler.com"
     }
   ]
 }

@@ -21,9 +21,16 @@ export interface Project {
   blurb: string;
   tag: string;
   year: string;
-  href: string;
+  /** Source repository URL. Optional — a project may have only a site,
+   *  only a repo, both, or neither. */
+  repo?: string;
+  /** Live / deployed site URL. Optional — see `repo`. */
+  site?: string;
   /** Optional thumbnail URL or relative path. Rendered as a small image
-   *  strip above the project blurb when provided. */
+   *  strip above the project blurb when provided. Suggested aspect:
+   *  roughly 3:1, rendered ~80px tall with object-fit cover. Path can be
+   *  absolute (https://...) or relative to the artifact's BASE_URL
+   *  (e.g. `screenshots/wallbing.png` resolves under `public/`). */
   image?: string;
 }
 

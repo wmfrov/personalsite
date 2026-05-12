@@ -1,6 +1,6 @@
 import React from 'react';
 import { Palette } from '../../lib/palettes';
-import { content } from '../../lib/content';
+import { content, Project } from '../../lib/content';
 
 export function ProjectsBack({ palette }: { palette: Palette }) {
   const { projects } = content;
@@ -27,65 +27,123 @@ export function ProjectsBack({ palette }: { palette: Palette }) {
                 : i % 3 === 1
                   ? palette.accent2
                   : palette.accent3;
-            return (
-              <a
-                key={p.title}
-                href={p.href}
-                target="_blank"
-                rel="noreferrer"
-                className="block font-mono no-underline"
-                style={{
-                  border: `3px solid ${palette.ink}`,
-                  background: palette.bg,
-                  color: palette.ink,
-                  boxShadow: `4px 4px 0 0 ${palette.ink}`,
-                  padding: '10px 12px',
-                }}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span
-                    className="font-bold px-1.5 py-0.5"
-                    style={{ background: accent, color: palette.bg, fontSize: 11 }}
-                  >
-                    {p.tag}
-                  </span>
-                  <span
-                    className="tabular-nums"
-                    style={{ fontSize: 12, opacity: 0.65 }}
-                  >
-                    {p.year}
-                  </span>
-                </div>
-                {p.image && (
-                  <img
-                    src={p.image}
-                    alt=""
-                    className="block w-full mb-2"
-                    style={{
-                      height: 80,
-                      objectFit: 'cover',
-                      border: `2px solid ${palette.ink}`,
-                      imageRendering: 'pixelated',
-                    }}
-                  />
-                )}
-                <div
-                  className="font-bold uppercase mb-1"
-                  style={{ fontSize: 14 }}
-                >
-                  {p.title}
-                </div>
-                <div
-                  className="leading-snug"
-                  style={{ fontSize: 12, opacity: 0.85 }}
-                >
-                  {p.blurb}
-                </div>
-              </a>
-            );
+            return <ProjectCard key={p.title} project={p} accent={accent} palette={palette} />;
           })}
         </div>
       </div>
     </div>
+  );
+}
+
+function ProjectCard({
+  project: p,
+  accent,
+  palette,
+}: {
+  project: Project;
+  accent: string;
+  palette: Palette;
+}) {
+  const links: { kind: 'repo' | 'site'; href: string; label: string }[] = [];
+  if (p.repo) links.push({ kind: 'repo', href: p.repo, label: 'REPO' });
+  if (p.site) links.push({ kind: 'site', href: p.site, label: 'SITE' });
+
+  return (
+    <div
+      className="font-mono flex flex-col"
+      style={{
+        border: `3px solid ${palette.ink}`,
+        background: palette.bg,
+        color: palette.ink,
+        boxShadow: `4px 4px 0 0 ${palette.ink}`,
+        padding: '10px 12px',
+      }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span
+          className="font-bold px-1.5 py-0.5"
+          style={{ background: accent, color: palette.bg, fontSize: 11 }}
+        >
+          {p.tag}
+        </span>
+        <span className="tabular-nums" style={{ fontSize: 12, opacity: 0.65 }}>
+          {p.year}
+        </span>
+      </div>
+      {p.image && (
+        <img
+          src={p.image}
+          alt=""
+          className="block w-full mb-2"
+          style={{
+            height: 80,
+            objectFit: 'cover',
+            border: `2px solid ${palette.ink}`,
+            imageRendering: 'pixelated',
+          }}
+        />
+      )}
+      <div className="font-bold uppercase mb-1" style={{ fontSize: 14 }}>
+        {p.title}
+      </div>
+      <div className="leading-snug" style={{ fontSize: 12, opacity: 0.85 }}>
+        {p.blurb}
+      </div>
+      {links.length > 0 && (
+        <div className="flex gap-2 mt-3 flex-wrap">
+          {links.map((l) => (
+            <ProjectLink
+              key={l.kind}
+              href={l.href}
+              label={l.label}
+              ariaLabel={`${p.title} ${l.kind === 'repo' ? 'source repository' : 'live site'}`}
+              accent={accent}
+              palette={palette}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectLink({
+  href,
+  label,
+  ariaLabel,
+  accent,
+  palette,
+}: {
+  href: string;
+  label: string;
+  ariaLabel: string;
+  accent: string;
+  palette: Palette;
+}) {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={ariaLabel}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+      className="font-bold uppercase tracking-widest no-underline focus:outline-none"
+      style={{
+        fontSize: 10,
+        padding: '4px 8px',
+        border: `2px solid ${palette.ink}`,
+        background: hover ? accent : palette.bg,
+        color: hover ? palette.bg : palette.ink,
+        boxShadow: hover ? `none` : `2px 2px 0 0 ${palette.ink}`,
+        transform: hover ? 'translate(2px, 2px)' : 'none',
+        transition: 'transform 80ms, box-shadow 80ms, background 80ms, color 80ms',
+      }}
+    >
+      {label} ↗
+    </a>
   );
 }
