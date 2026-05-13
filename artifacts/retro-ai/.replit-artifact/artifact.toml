@@ -2,7 +2,7 @@ kind = "web"
 previewPath = "/"
 title = "AI Dashboard"
 version = "1.0.0"
-id = "artifacts/brutalist-ai"
+id = "artifacts/retro-ai"
 router = "path"
 
 [[integratedSkills]]
