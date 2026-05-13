@@ -1,12 +1,12 @@
 # personalsite
 
-The source for [willziegler.com](https://willziegler.com) — a brutalist-styled personal site featuring a live, in-browser AI dashboard.
+The source for [willziegler.com](https://willziegler.com) — a personal site featuring a live, in-browser AI dashboard.
 
-![Brutalist AI Dashboard](artifacts/brutalist-ai/public/opengraph.jpg)
+![AI Dashboard](artifacts/retro-ai/public/opengraph.jpg)
 
 ## What's inside
 
-- **`artifacts/brutalist-ai`** — the React + Vite frontend that powers the site.
+- **`artifacts/retro-ai`** — the React + Vite frontend that powers the site.
 - **`artifacts/api-server`** — a small backing API.
 - **`artifacts/mockup-sandbox`** — a design canvas for previewing components in isolation.
 
@@ -16,7 +16,7 @@ This is a [pnpm](https://pnpm.io/) workspace. You'll need Node 20+ and pnpm inst
 
 ```bash
 pnpm install
-pnpm --filter @workspace/brutalist-ai dev
+pnpm --filter @workspace/retro-ai dev
 ```
 
 Then open the URL printed in the terminal (Vite defaults to <http://localhost:5173>).

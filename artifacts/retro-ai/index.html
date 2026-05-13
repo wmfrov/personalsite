@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>Will Ziegler — AI Dashboard</title>
+    <meta
+      name="description"
+      content="Will Ziegler's personal site — a deterministic dashboard that visualises a tiny imaginary language model training in real time."
+    />
+    <link rel="canonical" href="https://willziegler.com/" />
+    <meta name="theme-color" content="#eeefe9" />
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
+
+    <!-- Open Graph / social previews -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="willziegler.com" />
+    <meta property="og:title" content="Will Ziegler — AI Dashboard" />
+    <meta
+      property="og:description"
+      content="A deterministic dashboard visualising a tiny imaginary language model training in real time."
+    />
+    <meta property="og:url" content="https://willziegler.com/" />
+    <meta property="og:image" content="https://willziegler.com/opengraph.jpg" />
+    <meta property="og:image:secure_url" content="https://willziegler.com/opengraph.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="AI dashboard with a token stream, weights, loss curve, probabilities, and an embedding space."
+    />
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Will Ziegler — AI Dashboard" />
+    <meta
+      name="twitter:description"
+      content="A deterministic dashboard visualising a tiny imaginary language model training in real time."
+    />
+    <meta name="twitter:image" content="https://willziegler.com/opengraph.jpg" />
+    <meta
+      name="twitter:image:alt"
+      content="AI dashboard with a token stream, weights, loss curve, probabilities, and an embedding space."
+    />
+
+    <!-- JSON-LD: Person + WebSite -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://willziegler.com/#website",
+            "url": "https://willziegler.com/",
+            "name": "willziegler.com",
+            "description": "Will Ziegler's personal site — a deterministic dashboard that visualises a tiny imaginary language model training in real time.",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "Person",
+            "@id": "https://willziegler.com/#person",
+            "name": "Will Ziegler",
+            "url": "https://willziegler.com/",
+            "jobTitle": "Support @ Replit",
+            "sameAs": [
+              "https://github.com/wmfrov",
+              "https://www.linkedin.com/in/will-ziegler/"
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <!--
+      Fonts: IBM Plex Mono is self-hosted from /public/fonts as
+      Latin-only woff2s, only the weights actually rendered (400 and
+      700). The @font-face declarations live in src/index.css. We
+      preload the regular weight so first paint can swap as soon as
+      the file lands.
+    -->
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="%BASE_URL%fonts/ibm-plex-mono-latin-400.woff2"
+      crossorigin
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
