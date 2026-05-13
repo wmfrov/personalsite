@@ -35,11 +35,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build brutalist-ai
+      - name: Build retro-ai
         env:
           NODE_ENV: production
           BASE_PATH: /
-        run: pnpm --filter @workspace/brutalist-ai build
+        run: pnpm --filter @workspace/retro-ai build
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -47,7 +47,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: artifacts/brutalist-ai/dist/public
+          path: artifacts/retro-ai/dist/public
 
   deploy:
     needs: build
